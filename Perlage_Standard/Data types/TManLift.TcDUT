@@ -1,0 +1,23 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<TcPlcObject Version="1.1.0.1" ProductVersion="3.1.4022.18">
+  <DUT Name="TManLift" Id="{a6142e57-693c-4b03-a795-52f67c1dee92}">
+    <Declaration><![CDATA[{attribute 'pack_mode' := '1'}
+TYPE TManLift :
+	STRUCT
+		TLiftAxis				: TManDrive;
+		TLiftAxisFullPos		: TManDrivePos;
+		TLiftAxisEmptyPos		: TManDrivePos;
+		TLiftAxisLoadPos		: TManDrivePos;
+		TLiftAxisZOffset		: TManDrivePos;
+		TMoveToPlate			: TManButton;
+		TMoveToPlateVision		: TManButton;
+		bDrawerInPos 			: BOOL;
+		bPlateInPos 			: BOOL;
+		lrPlatePos				: LREAL;
+		TLockDrawer				: TManButton;
+		TLockPlate				: TManButton;
+	END_STRUCT
+END_TYPE
+]]></Declaration>
+  </DUT>
+</TcPlcObject>

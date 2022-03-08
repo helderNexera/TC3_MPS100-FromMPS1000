@@ -1,0 +1,3039 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<TcPlcObject Version="1.1.0.1" ProductVersion="3.1.4022.18">
+  <POU Name="LoaderHdl" Id="{2ccba174-361e-4ee8-a2b0-425a1f6fc94e}" SpecialFunc="None">
+    <Declaration><![CDATA[FUNCTION_BLOCK LoaderHdl
+
+(*
+	Description 	: Function bloc to handle loader
+	Author			: DRE
+	Date			: 22.09.2016
+	Version			: 1.00
+
+	Modifications :
+
+*)
+VAR_INPUT
+	bEnable					: BOOL;
+	bResetErrors			: BOOL;
+	bPowerOn				: BOOL;
+	eCommand				: TModuleCommands;
+	bHomeX					: BOOL;
+	bLimitPosX				: BOOL;
+	bLimitNegX				: BOOL;
+	bHomeY					: BOOL;
+	bLimitPosY				: BOOL;
+	bLimitNegY				: BOOL;
+	bHomeZ1					: BOOL;
+	bLimitPosZ1				: BOOL;
+	bLimitNegZ1				: BOOL;
+	bHomeZ2					: BOOL;
+	bLimitPosZ2				: BOOL;
+	bLimitNegZ2				: BOOL;
+	iHead1VacuumFlow		: INT;
+	iHead2VacuumFlow		: INT;
+	bPlateVacuumIsOk		: BOOL;
+	bPlateTakerIsUp			: BOOL;
+	bPlateTakerIsDown		: BOOL;
+	iPlateDistance			: INT;
+	bStopReq				: BOOL;
+	bPauseReq				: BOOL;
+	sInGiveToTable			: TTaker;
+	sInTakeFromTable		: TGiver;
+	sInGiveToTurnOver		: TTaker;
+	sInTakeFromOver			: TGiver;
+	eRunCommand				: TRunCmdLoader;
+	eTableSide				: TTableSide;
+	sPartDataMMI			: TPartDataMMI;
+	sPlateData				: TPlateData;
+	eVisionRunStatus		: TRunStatus;
+	eLift1RunStatus			: TRunStatus;
+	eLift2RunStatus			: TRunStatus;
+	eRejectRunStatus		: TRunStatus;
+	sLift1RunData			: TRunDataLift;
+	sLift2RunData			: TRunDataLift;
+	sRejectRunData			: TRunDataReject;
+	bNewPlateLift1			: BOOL;
+	bNewPlateLift2			: BOOL;
+	bNewPlateReject			: BOOL;
+	bNewJob					: BOOL;
+	bManInterlock			: BOOL;
+	sVaccumSettingsHead		: TVaccumSettings;
+	sVaccumSettingsPlate	: TVaccumSettings;
+	TJobElapsed				: TIME;
+	dwRejectPlateNb			: DWORD;
+	bDisableVision			: BOOL;
+	bSlowMode				: BOOL;
+END_VAR
+VAR_OUTPUT
+	bModuleError			: BOOL;
+	bZSensorOutOfRangeError	: BOOL;
+	bHead1VacuumError		: BOOL;
+	bHead2VacuumError		: BOOL;
+	bJackError				: BOOL;
+	bXAxisError				: BOOL;
+	bYAxisError				: BOOL;
+	bZ1AxisError			: BOOL;
+	bZ2AxisError			: BOOL;
+	bTAxisError				: BOOL;
+	bPlateVacuumError		: BOOL;
+	bActivateHead1Vacuum	: BOOL			:= FALSE;
+	bActivateHead1Blowing	: BOOL			:= FALSE;
+	bActivateHead2Vacuum	: BOOL			:= FALSE;
+	bActivateHead2Blowing	: BOOL			:= FALSE;
+	bActivatePlateVacuum	: BOOL			:= FALSE;
+	bActivatePlateBlowing	: BOOL			:= FALSE;
+	bMovePlateTakerUp		: BOOL			:= FALSE;
+	bMovePlateTakerDown		: BOOL			:= FALSE;
+	bAspirationBrushOn		: BOOL;
+	sOutGiveToTable			: TGiver;
+	sOutTakeFromTable		: TTaker;
+	sOutGiveToTurnOver		: TGiver;
+	sOutTakeFromTurnOver	: TTaker;
+	eRunStatus				: TRunStatus;
+	eVisionRunCmd			: TRunCmdVision;
+	eLift1RunCmd			: TRunCmdLift;
+	eLift2RunCmd			: TRunCmdLift;
+	eRejectRunCmd			: TRunCmdReject;
+	bVacuumInUse			: BOOL;
+	bManInterlockOut		: BOOL;
+	bManInterlockLiftOut	: BOOL;
+END_VAR
+VAR_IN_OUT
+	sRunDataVision			: TRunDataVision;
+	sRunData				: TRunDataLoader;
+	sCurrentState			: TModuleData;
+	TManualCmd				: TManLoader;
+	sXAxisRef				: AXIS_REF;
+	sYAxisRef				: AXIS_REF;
+	sZ1AxisRef				: AXIS_REF;
+	sZ2AxisRef				: AXIS_REF;
+	sThetaAxisRef			: AXIS_REF;
+	bLift1NeedsPlate		: BOOL;
+	bLift1Lift1BadPlate		: BOOL;
+	bLift2NeedsPlate		: BOOL;
+	bRejectNeedsPlate		: BOOL;
+	sHMIPartData			: TDataLog;
+	sProdLot				: TProductionLot;
+	sMachineCnt				: TprodCounter;
+END_VAR
+VAR CONSTANT
+	iMaxScanVisionModelPart		: INT 		:= 2;
+	iMaxScanVisionModelPlate	: INT 		:= 2;
+	iVisionModelEmpty			: INT 		:= 0;
+	iVisionModelPartBase		: INT 		:= 1;
+	iVisionModelPlateBase		: INT 		:= 0;
+	aiVisionModelPart			: ARRAY[0..iMaxScanVisionModelPart] OF INT 	:= [iVisionModelPartBase, iVisionModelPartBase, iVisionModelPartBase];
+	aiVisionModelPlate			: ARRAY[0..iMaxScanVisionModelPlate] OF INT := [iVisionModelPlateBase, iVisionModelPlateBase, iVisionModelPlateBase];
+	iManMoveAxisNone			: INT 		:= -1;
+	alrSafePos					: ARRAY[0..4] OF LREAL 	:= [0, 0, -11, -11, 0];		(* Security positions *)
+	alrCleaningOffset			: LREAL 	:= 36;
+	alrYSafePosDuringRun		: LREAL 	:= 303;								(* Be carful with var alrUnsecuredArea, alrYSafePosDuringRun need to be set outside alrUnsecuredArea *)
+	lrSafeTolerance 			: LREAL 	:= 2;								(* Tolerance for safety Z axis down *)
+	lrPreSafeTolerance 			: LREAL 	:= 0.5;								(* Tolerance for safety Z axis down *)
+	lrMaxXYMoveAllowed			: LREAL 	:= 2.1; 							(* Max move authorized when Z axis is down *)
+	lrCalibrationPartAndHeadHeight				: LREAL := 15.5;
+	lrCalibrationLayeringAndPartAndHeadHeight 	: LREAL := 21;
+	lrCalibrationHeadSusPartHeadSousHeight 		: LREAL := 31;
+	alrLiftCalibrationOffset	: ARRAY[0..2, LA_X..LA_Y] OF LREAL	:=
+									[67.95,  114.95,		(* Reject Offset *)				
+									67.95, 114.95,			(* Lift1 Offset *)
+									67.95, 114.95];			(* Lift2 Offset *)
+									//[67.95,  114.95 - 1.65,			// 1/2 plates + error mecanic (* There is a mecanic error on the adjustement part *)
+									//67.95, 114.95 + 2.15,				(* Lift1 Offset *)
+									//67.95, 114.95 + 2.15];			(* Lift2 Offset *)
+
+END_VAR
+VAR PERSISTENT
+	iScanTryMax					: INT 		:= 2;
+	alrRobotPos					: ARRAY[0..3, 0..LTP_END] OF LREAL;
+	alrRobotOffset				: ARRAY[0..3, 0..LTP_END] OF LREAL;
+	alrJogStep					: ARRAY[0..4] OF LREAL 		:= [5, 5, 5, 5];		(* Jog step for X,Y,Z,Theta *)
+	lrSensorAdjust				: LREAL;											(* Correction on sensor in mm *)
+	lrCleaningXSpeed			: LREAL 	:= 5;
+	lrCleaningThetaSpeed		: LREAL 	:= 10;
+	lrCleaningThetaAngle		: LREAL 	:= 45;
+	lrSpeedWithPlate			: LREAL 	:= 50;
+	TSensorZWaitStabTime		: TIME		:= T#100MS;
+	TVisionWaitStabTime			: TIME		:= t#100ms;
+	iRetryTake					: INT		:= 3;
+	alrVacuumThreshold			: ARRAY[0..1] OF LREAL		:= [8, 8]; // [-0.65,-0.65];
+	alrUnsecuredArea			: ARRAY[0..1, 0..1] OF LREAL := [150, 280, 520, 420];						(* Area where loader must not go [XminYmin,XmaxYmax], when value changed, be carful with var alrYSafePosDuringRun*)
+	alrSecuredSafeZPos			: ARRAY[0..1] OF LREAL 		:= [-10, -10];				(* Z position to use for safety in secured area *)
+	lrThetaOffsetMecDrop		: LREAL;						(* offset for drop part without using vision, not teached, it is hard writed *)
+	lrXOffsetMecDrop			: LREAL;						(* offset for drop part without using vision, not teached, it is hard writed, compensate mec offset *)
+	lrYOffsetMecDrop			: LREAL;
+	lrZSensorCalibrationOffset	: LREAL 	:= 0;				(* Offset between Position A and the 0 plate on reject, hard coded here*)
+	bUnsecuredAeraEntry 		: BOOL 		:= FALSE;
+
+END_VAR
+VAR
+	alrMaxRobotSpeed		: ARRAY[0..4] OF LREAL;
+	iAxis					: INT;
+	iHead					: INT;
+	iTeachedAxis			: INT;
+	iManMoveAxis			: INT;
+	alrTargetPos			: ARRAY[0..4] OF LREAL;
+	eRobotXYTStatus			: TAxisState;
+	aeMoveRobotCommand		: ARRAY[0..4] OF TAxisCommands	:= [5(AC_None)];
+	aTRobotAxis				: ARRAY[0..4] OF StdAxis;
+	TCheckJack				: FB_CheckJack1_2;
+	abEnableHeadVacuum		: ARRAY[0..1] OF BOOL;
+	abBypassVacuumError		: ARRAY[0..1] OF BOOL;
+	abResetVacuum			: ARRAY[0..1] OF BOOL;
+	aTHeadVacuum			: ARRAY[0..1] OF FB_VacuumAnalogCheck;
+	bEnablePlateVacuum		: BOOL;
+	TPlateVacuum			: FB_Vacuum;
+	alrRobotSpeed			: ARRAY[0..4] OF LREAL;			(* X,Y,Z1,Z2,Theta *)
+	alrRobotAcceleration 	: ARRAY[0..4] OF LREAL;
+	alrRobotDeceleration 	: ARRAY[0..4] OF LREAL;
+	alrRobotJerk 			: ARRAY[0..4] OF LREAL;
+	iRobotPosition			: INT;
+	iRobotOffset			: INT;
+	iTeachedModeDebug		: INT; (* 0 - None, 1 Offset and Pos, 2 - Pos, 3 - Offset *)
+(*	abConflictDetected		: ARRAY[0..4] OF BOOL;*)						(* DEBUG : Used to log which conflict has been detected *)
+	TSensorMeasure			: ConverterLinearLimit;
+	bConflictDetected		: BOOL;
+	bManualZIsSafe			: BOOL;
+	ZPositionTakeGive		: LREAL;
+	ZPosition				: LREAL;
+	bUseGiveTake			: BOOL;
+	bCleaningThetaCw		: BOOL;
+	bCleaningStopTheta		: BOOL;
+	bCleaningFromNegToPos	: BOOL;
+(*	bPrepareForDrop			: BOOL;
+	lrStartX				: LREAL;
+	lrStartY				: LREAL;
+	lrStartTheta			: LREAL;*)
+	aTPartOnPlate			: ARRAY[0..2, 0..C_MAX_NB_OF_PARTS_ON_PLATE] OF TRunDataPlate;
+	iPlatePos				: INT;
+	i,j						: INT;
+	abResetPlateState		: ARRAY[0..2] OF BOOL := [TRUE, TRUE, TRUE];
+	abCopySwitchFromPlate 	: BOOL := FALSE;
+	abCopySwitchToPlate 	: BOOL := FALSE;
+	bFoundPlatePos			: BOOL;
+	bInvalidPlate			: BOOL;
+	bPlateEmpty				: BOOL;
+	eReturnStep				: TModuleSteps;
+	eReturnStepSwitchPlate	: TModuleSteps;
+	eReturnStepMeasureZLift	: TModuleSteps;
+	eReturnStep4SecureMove	: TModuleSteps;
+	iZSensorPositionScan	: INT;
+	lrZSensorPosition		: ARRAY[0..1] OF LREAL;
+	TSensorZWaitStab		: TON;
+	bDoNothing				: BOOL;
+	TVisionWaitStab			: TON;
+	sInGiveToModule			: TTaker;
+	sInTakeFromModule		: TGiver;
+	sOutGiveToModule		: TGiver;
+	sOutTakeFromModule		: TTaker;
+	eScanPos				: TLoaderTeachPos;
+	ePos					: TLoaderTeachPos;
+	aTScanResult			: ARRAY[0..C_MAX_NB_OF_PARTS_ON_PLATE] OF TVisionPartData;
+	iRetryTakeCount			: INT;
+	iVisionScanModel		: INT;
+	bDoPlateScan			: BOOL;
+	bTakeMoveUp				: BOOL;
+	bIncProdCounter			: BOOL := FALSE;
+	TComputeVisionPos		: ComputeVisionPos;
+	TOffsetPos				: TPositionXYTheta;
+	eDropMode				: TLoaderDropMode;
+	eTakeMode				: TLoaderTakeMode;
+	bRetriedCompleteLiftTake	: BOOL;
+	bRetryVision			: BOOL;
+	alrZLiftPos				: ARRAY[0..2] OF LREAL	:= [0, 0, 0];
+	lrPartX					: LREAL;
+	lrPartY					: LREAL;
+	iStep					: INT;
+	testLD					: TLoaderModulePos;
+	alrSecuredTarget		: ARRAY[0..1] OF LREAL;					// Secured XY position to reach
+	iSecuredIndexFirst		: INT;									// Index of secured position to go first
+	iSecuredIndexSecond		: INT;									// Index of secured position to go second
+	iEntrySecuredArea 		: INT;									// Index by where we enter de secured aera
+	iScanTry				: INT;
+	toto 		: BOOL;
+	ntiti 		: INT;
+	ntata 		: INT;
+	aTPartOnSwitchPlate		: ARRAY[0..C_MAX_NB_OF_PARTS_ON_PLATE] OF TRunDataPlate;
+	bBadPartDetected 		:BOOL 		:= FALSE;
+END_VAR]]></Declaration>
+    <Implementation>
+      <ST><![CDATA[TSensorMeasure(
+	iInput := iPlateDistance,
+	iHardwareMin := 12710, (*V*)
+	iHardwareMax := 27827, 	(*V*)
+	lrSoftwareMin := -8.5,  		(*mm*)
+	lrSoftwareMax := 6.5, 		(*mm*)
+	lrOffset := lrSensorAdjust	(*mm*)
+	);
+
+alrRobotOffset[LTA_X,LTO_Plate] := 145;
+alrRobotOffset[LTA_Y,LTO_Plate] := -42.8;
+
+IF (NOT sCurrentState.bStepMode) THEN
+	sCurrentState.bWaitStep := FALSE;
+END_IF
+
+FOR iAxis := 0 TO 4 DO
+	alrMaxRobotSpeed[iAxis] := aTRobotAxis[iAxis].lrRunningSpeed;
+END_FOR
+
+// HFO : Dynamics of axis X and Y, 2 modes for acceleration, slow and max
+IF NOT bSlowMode THEN // Max mode: with 0, it use default settings
+	FOR i := 0 TO 1 DO 
+		alrRobotAcceleration[i] := 0;
+		alrRobotDeceleration[i] := 0;
+		alrRobotJerk[i] := 0;
+	END_FOR
+ELSE // Slow mode, Change here to set the slow mode
+	FOR i := 0 TO 1 DO
+		alrRobotAcceleration[i] := 10000;
+		alrRobotDeceleration[i] := alrRobotAcceleration[i];		// Deceleration same as acceleration
+		alrRobotJerk[i] := 100000;
+	END_FOR	
+END_IF
+
+(* Vision offset are always 0 if vision disabled *)
+IF bDisableVision THEN
+	sRunDataVision.TVisionPartData.lrX := 0;
+	sRunDataVision.TVisionPartData.lrY := 0;
+	//sRunDataVision.TVisionPartData.lrTheta := 0;
+	sRunDataVision.TVisionPartData.lrTheta := -90;
+END_IF
+
+eVisionRunCmd := RCV_None;
+eLift1RunCmd := RCL_None;
+eLift2RunCmd := RCL_None;
+eRejectRunCmd := RCR_None;
+
+CASE sRunData.eModule OF
+	LMP_Table:
+		sInGiveToModule := sInGiveToTable;
+		sInTakeFromModule := sInTakeFromTable;
+	LMP_TurnOverFix,LMP_TurnOverArm:
+		sInGiveToModule := sInGiveToTurnOver;
+		sInTakeFromModule := sInTakeFromOver;
+END_CASE
+
+CASE eCommand OF
+	MC_NoCmd :
+		CASE sCurrentState.eStatus OF
+			MS_Init :
+				IF sCurrentState.bInError THEN
+					sCurrentState.eStatus := MS_Stopped;
+				ELSE
+					CASE sCurrentState.eStep OF
+						SP_InitStp1 :
+							(* Use maximal speed *)
+							alrRobotSpeed := alrMaxRobotSpeed;
+							(* Check where there is parts *)
+							abBypassVacuumError[0] := FALSE;
+							abBypassVacuumError[1] := FALSE;
+							sRunData.aTPartData[LH_Head1].bPartPresent := abEnableHeadVacuum[0];
+							sRunData.aTPartData[LH_Head2].bPartPresent := abEnableHeadVacuum[1];
+							sRunData.bPlatePresent := bEnablePlateVacuum;
+							alrRobotSpeed := alrMaxRobotSpeed;
+							IF bEnablePlateVacuum THEN
+								alrRobotSpeed[LA_X] := lrSpeedWithPlate;
+								alrRobotSpeed[LA_Y] := lrSpeedWithPlate;
+							END_IF
+							bMovePlateTakerDown := FALSE;
+							bAspirationBrushOn := FALSE;
+							bRetriedCompleteLiftTake := FALSE;
+							sCurrentState.eStep := SP_InitStp2;
+						SP_InitStp2 :
+							IF bPlateTakerIsUp AND aTHeadVacuum[0].bVacuumCorrect AND aTHeadVacuum[1].bVacuumCorrect AND TPlateVacuum.bVacuumCorrect THEN
+								IF bIncProdCounter THEN
+									bIncProdCounter := FALSE;
+									IF sRunData.aTPartData[LH_Head1].bPartPresent THEN
+										sProdLot.dLoadedQty := sProdLot.dLoadedQty + 1;
+									END_IF
+								END_IF
+								IF sCurrentState.bInitDone THEN
+									sCurrentState.eStep := SP_InitStp50;
+								ELSE
+									//sCurrentState.eStep := SP_InitStp3;
+									sCurrentState.eStep := SP_InitStp4;
+								END_IF
+							END_IF
+						SP_InitStp3 :
+(*							aeMoveRobotCommand[LA_Z1] := AC_Init;
+							aeMoveRobotCommand[LA_Z2] := AC_Init;
+							IF aTRobotAxis[LA_Z1].eCurrentState = AS_InPosition AND aTRobotAxis[LA_Z2].eCurrentState = AS_InPosition THEN
+								sCurrentState.eStep := SP_InitStp4;
+							END_IF*)
+								aeMoveRobotCommand[LA_Z1] := AC_Init;
+								aeMoveRobotCommand[LA_Z2] := AC_Init;
+								sCurrentState.eStep := SP_InitStp4;
+						SP_InitStp4 : 
+(*							IF aTRobotAxis[LA_Z1].eCurrentState=AS_InPosition AND
+								aTRobotAxis[LA_Z2].eCurrentState=AS_InPosition THEN
+								(* Move Z to Safe *)
+								alrTargetPos[LA_Z1] := alrSafePos[LA_Z1];
+								alrTargetPos[LA_Z2] := alrSafePos[LA_Z2];
+								aeMoveRobotCommand[LA_Z1] := AC_MoveAtAbsPos;
+								aeMoveRobotCommand[LA_Z2] := AC_MoveAtAbsPos;
+*)							(* Move Z Up *)
+							aeMoveRobotCommand[LA_Z1] := AC_MoveLimitNeg;
+							aeMoveRobotCommand[LA_Z2] := AC_MoveLimitNeg;
+							sCurrentState.eStep := SP_InitStp5;
+//							END_IF
+						SP_InitStp5 :
+(*							IF aTRobotAxis[LA_Z1].eCurrentState=AS_InPosition AND
+								aTRobotAxis[LA_Z2].eCurrentState=AS_InPosition THEN
+*)							IF aTRobotAxis[LA_Z1].eCurrentState=AS_OnLimitNeg AND
+								aTRobotAxis[LA_Z2].eCurrentState=AS_OnLimitNeg THEN
+								(* Init X / Y / Theta*)
+								aeMoveRobotCommand[LA_X] := AC_Init;
+								aeMoveRobotCommand[LA_Y] := AC_Init;
+								aeMoveRobotCommand[LA_THETA] := AC_Init;
+								sCurrentState.eStep := SP_InitStp6;
+							END_IF
+						SP_InitStp6:
+							IF aTRobotAxis[LA_X].eCurrentState =  AS_InPosition AND aTRobotAxis[LA_Y].eCurrentState =  AS_InPosition THEN
+								(* Move X/ Y to Safe *)
+								alrTargetPos[LA_X] := alrSafePos[LA_X];
+								alrTargetPos[LA_Y] := alrSafePos[LA_Y];
+								aeMoveRobotCommand[LA_X] := AC_MoveAtAbsPos;
+								aeMoveRobotCommand[LA_Y] := AC_MoveAtAbsPos;
+								sCurrentState.eStep := SP_InitStp7;
+							END_IF
+						SP_InitStp7 :
+							IF aTRobotAxis[LA_X].eCurrentState =  AS_InPosition AND aTRobotAxis[LA_Y].eCurrentState =  AS_InPosition THEN
+								(* Init Z *)
+								aeMoveRobotCommand[LA_Z1] := AC_Init;
+								aeMoveRobotCommand[LA_Z2] := AC_Init;
+								sCurrentState.eStep := SP_InitStp8;
+							END_IF
+						SP_InitStp8 :
+							IF aTRobotAxis[LA_Z1].eCurrentState=AS_InPosition AND
+								aTRobotAxis[LA_Z2].eCurrentState=AS_InPosition THEN
+								(* Move Z to Safe *)
+								alrTargetPos[LA_Z1] := alrSafePos[LA_Z1];
+								alrTargetPos[LA_Z2] := alrSafePos[LA_Z2];
+								aeMoveRobotCommand[LA_Z1] := AC_MoveAtAbsPos;
+								aeMoveRobotCommand[LA_Z2] := AC_MoveAtAbsPos;
+								sCurrentState.eStep := SP_InitStp9;
+							END_IF
+						SP_InitStp9:
+							(* Wait until we are up *)
+							IF (aTRobotAxis[LA_Z1].eCurrentState = AS_InPosition) AND
+								(aTRobotAxis[LA_Z2].eCurrentState = AS_InPosition) THEN
+								sCurrentState.eStep := SP_InitStp10;
+							END_IF
+						SP_InitStp10 :
+							IF (aTRobotAxis[LA_THETA].eCurrentState = AS_InPosition)  THEN
+								sCurrentState.eStep := SP_InitStp99;
+							END_IF
+						SP_InitStp50 :
+							(* Move Z to Safe *)
+							alrTargetPos[LA_Z1] := alrSafePos[LA_Z1];
+							alrTargetPos[LA_Z2] := alrSafePos[LA_Z2];
+							aeMoveRobotCommand[LA_Z1] := AC_MoveAtAbsPos;
+							aeMoveRobotCommand[LA_Z2] := AC_MoveAtAbsPos;
+							sCurrentState.eStep := SP_InitStp51;
+						SP_InitStp51:
+							(* Wait until we are up *)
+							IF (aTRobotAxis[LA_Z1].eCurrentState = AS_InPosition) AND
+								(aTRobotAxis[LA_Z2].eCurrentState = AS_InPosition) THEN
+								(* Move X/ Y to Safe *)
+								alrTargetPos[LA_X] := alrSafePos[LA_X];
+								alrTargetPos[LA_Y] := alrSafePos[LA_Y];
+								aeMoveRobotCommand[LA_X] := AC_MoveAtAbsPos;
+								aeMoveRobotCommand[LA_Y] := AC_MoveAtAbsPos;
+								sCurrentState.eStep := SP_InitStp52;
+							END_IF
+						SP_InitStp52:
+							IF aTRobotAxis[LA_X].eCurrentState =  AS_InPosition AND aTRobotAxis[LA_Y].eCurrentState =  AS_InPosition THEN
+								sCurrentState.eStep := SP_InitStp99;
+							END_IF
+						SP_InitStp99 :
+							sCurrentState.bInitDone := TRUE;
+							sCurrentState.eStep := SP_RunStp1;
+							sCurrentState.eStatus := MS_Ready;
+					END_CASE
+				END_IF
+			MS_Running :
+					// Force running safe pos
+					IF (NOT sCurrentState.bWaitStep)  THEN
+					IF sRunData.eTaker = LH_Head1 THEN
+						iHead := 0;
+					ELSE
+						iHead := 1;
+					END_IF
+					CASE sCurrentState.eStep OF
+						SP_RunStp1:
+							eRunStatus := RS_WaitRequest;
+							CASE eRunCommand OF
+								RCLo_None:
+									IF bStopReq  THEN
+										sCurrentState.eStatus := MS_Ready;
+									ELSIF bPauseReq THEN
+										sCurrentState.eStatus := MS_Paused;
+									END_IF
+								RCLo_TakePart:
+									sCurrentState.bWaitStep := TRUE;
+									sOutTakeFromModule.bReadyToTake := FALSE;
+									sOutTakeFromModule.bHasTaken := FALSE;
+									sCurrentState.eStep := SP_RunStp10;
+								RCLo_GivePart:
+									sCurrentState.bWaitStep := TRUE;
+									sOutGiveToModule.bHasGiven := FALSE;
+									sOutGiveToModule.bPartDataReady := FALSE;
+									sCurrentState.eStep := SP_RunStp20;
+								RCLo_TakePlate:
+									eReturnStep := SP_RunStp1;
+									sCurrentState.eStep := SP_RunStp30;
+								RCLo_GivePlate:
+									eReturnStep := SP_RunStp1;
+									sCurrentState.eStep := SP_RunStp40;
+								RCLo_MoveToSafe:
+									sCurrentState.eStep := SP_RunStp50;
+								RCLo_Cleaning:
+									sCurrentState.eStep := SP_RunStp60;
+								RCLo_SwitchPlate:
+									eReturnStep := SP_RunStp1;
+									sCurrentState.eStep := SP_RunStp70;
+								RCLo_PrepareTakePart:
+									sCurrentState.eStep := SP_RunStp100;
+								RCLo_PrepareDropPart:
+									sCurrentState.eStep := SP_RunStp200;
+								RCLo_EndOfRecipe:
+									sCurrentState.eStep := SP_RunStp400;
+								RCLo_ScanPlate:
+									sCurrentState.eStep := SP_RunStp410;
+							END_CASE
+							IF sCurrentState.eStep<> SP_RunStp1 THEN eRunStatus := RS_ProcessRequest1; END_IF
+						SP_RunStp10 :  (*Take Part*)
+							CASE sRunData.eModule OF
+								LMP_Lift1:
+									ZPosition := ZPositionTakeGive + sPartDataMMI.lrPartOffsetZLiftTake;
+									bUseGiveTake := FALSE;
+									eTakeMode := sPartDataMMI.eTakeModeLift;
+									abBypassVacuumError[iHead] := (sPartDataMMI.lrPartOffsetZLiftBadTake > 0);
+								LMP_Table,LMP_TurnOverFix:
+									ZPosition := ZPositionTakeGive + sPartDataMMI.lrPartOffsetZLayeringTake;
+									bUseGiveTake := TRUE;
+									eTakeMode := LTM_GoDownAndVacuum;
+									abBypassVacuumError[iHead] := FALSE;
+								ELSE
+									ZPosition := alrSecuredSafeZPos[iHead];
+									bUseGiveTake := FALSE;
+									eTakeMode := LTM_GoDownAndVacuum;
+									abBypassVacuumError[iHead] := FALSE;
+							END_CASE
+							iRetryTakeCount := 1;
+							bTakeMoveUp := FALSE;
+							sCurrentState.eStep := SP_RunStp11;
+						SP_RunStp11 :
+							IF bUseGiveTake THEN
+								IF sInTakeFromModule.bPartDataReady THEN
+									sRunData.aTPartData[iHead] := sInTakeFromModule.TPartData;
+									sRunData.aTPartData[iHead].bPartPresent := FALSE;
+									sCurrentState.eStep := SP_RunStp12;
+								END_IF
+							ELSE
+								sRunData.aTPartData[iHead] := InitNewPartData();
+								sRunData.aTPartData[iHead].dwProductionInTime := TIME_TO_DWORD(TJobElapsed);
+								sRunData.aTPartData[iHead].iPlateInPos := iPlatePos;
+								sRunData.aTPartData[iHead].bPartPresent := FALSE;
+								bIncProdCounter := TRUE;
+								sCurrentState.eStep := SP_RunStp12;
+							END_IF
+						SP_RunStp12 :
+							alrTargetPos[LA_Z1+iHead] := ZPosition;
+							aeMoveRobotCommand[LA_Z1+iHead] := AC_MoveAtAbsPos;
+							sCurrentState.eStep := SP_RunStp13;
+						SP_RunStp13 :  (*Movement done*)
+							IF aTRobotAxis[LA_Z1+iHead].lrRemainingTimeToGo < 1 AND aTRobotAxis[LA_Z1+iHead].lrRemainingTimeToGo <> 0 AND eTakeMode = LTM_VacuumAndGoDown THEN
+								abEnableHeadVacuum[iHead] := TRUE;
+							END_IF
+							IF aTRobotAxis[LA_Z1+iHead].eCurrentState = AS_InPosition THEN
+								abEnableHeadVacuum[iHead] := TRUE;
+								sOutTakeFromModule.bReadyToTake := TRUE;
+								sCurrentState.eStep := SP_RunStp14;
+							END_IF
+						SP_RunStp14 :
+							(* Wait until module has given *)
+							IF sInTakeFromModule.bHasGiven OR NOT bUseGiveTake THEN
+								sCurrentState.eStep := SP_RunStp15;
+							END_IF
+						SP_RunStp15 :
+							(* Check if the part is on head *)
+							IF aTRobotAxis[LA_Z1+iHead].eCurrentState = AS_InPosition THEN
+								IF aTHeadVacuum[iHead].bVacuumCorrect THEN
+									bRetriedCompleteLiftTake := FALSE;
+									abBypassVacuumError[iHead] := FALSE;
+									alrTargetPos[LA_Z1+iHead] := alrSecuredSafeZPos[iHead];
+									aeMoveRobotCommand[LA_Z1+iHead] := AC_MoveAtAbsPos;
+									sCurrentState.eStep := SP_RunStp16;
+								ELSIF aTHeadVacuum[iHead].bVacuumError AND sPartDataMMI.lrPartOffsetZLiftBadTake > 0 AND sRunData.eModule = LMP_Lift1 THEN
+									IF NOT bTakeMoveUp THEN
+										bTakeMoveUp := TRUE;
+										abResetVacuum[iHead] := TRUE;
+										abBypassVacuumError[iHead] := FALSE;
+										alrTargetPos[LA_Z1+iHead] := ZPositionTakeGive - sPartDataMMI.lrPartOffsetZLiftBadTake;
+										aeMoveRobotCommand[LA_Z1+iHead] := AC_MoveAtAbsPos;
+									ELSIF NOT bRetriedCompleteLiftTake THEN
+										(* Ask manager to retry take *)
+										bRetriedCompleteLiftTake := TRUE;
+										alrTargetPos[LA_Z1+iHead] := alrSecuredSafeZPos[iHead];
+										aeMoveRobotCommand[LA_Z1+iHead] := AC_MoveAtAbsPos;
+										sCurrentState.eStep := SP_RunStp18;
+									END_IF
+								END_IF
+							END_IF
+						SP_RunStp16 :  (*Movement done*)
+							IF aTRobotAxis[LA_Z1+iHead].eCurrentState = AS_InPosition OR
+									(bUse103171OptimB5MoveOnPreSafeZ AND  (aTRobotAxis[LA_Z1].lrCurrentPos < (alrSecuredSafeZPos[0]+lrPreSafeTolerance)))THEN
+								IF aTHeadVacuum[iHead].bVacuumCorrect THEN
+									(* Part correctly taken *)
+									IF bUseGiveTake THEN
+										sOutTakeFromModule.bHasTaken := TRUE;
+									ELSE
+										sRunData.aTPartData[iHead].dwProductionInTime := TIME_TO_DWORD(TJobElapsed);
+										sRunData.aTPartData[iHead].iPlateInPos := iPlatePos;
+										sProdLot.dLoadedQty := sProdLot.dLoadedQty + 1;
+										bIncProdCounter := FALSE;
+										IF sRunData.eModule = LMP_Lift1 THEN
+											aTPartOnPlate[ LPP_Lift1,iPlatePos].ePartStatus := PPS_Absent;
+										END_IF
+									END_IF
+									sRunData.aTPartData[iHead].bPartPresent := TRUE;
+									(*IF bBadPartDetected THEN
+										sRunData.aTPartData[iHead].bToReject := TRUE;
+									END_IF*)
+									sRunData.aTPartData[iHead].bToReject := bBadPartDetected;
+									sCurrentState.eStep := SP_RunStp1;
+								ELSE
+									(* Part has been not taken, retry *)
+									bTakeMoveUp := FALSE;
+									CASE sRunData.eModule OF
+										LMP_Table,LMP_TurnOverFix:
+											IF iRetryTakeCount < iRetryTake THEN
+												abEnableHeadVacuum[iHead] := FALSE;
+												iRetryTakeCount := iRetryTakeCount + 1;
+												sCurrentState.eStep := SP_RunStp17;
+											END_IF
+									END_CASE
+								END_IF
+							END_IF
+						SP_RunStp17 :  (*Retry*)
+							IF aTHeadVacuum[iHead].bVacuumCorrect THEN
+								sCurrentState.eStep := SP_RunStp12;
+							END_IF
+						SP_RunStp18 :  (*Movement done*)
+							IF aTRobotAxis[LA_Z1+iHead].eCurrentState = AS_InPosition THEN
+								sCurrentState.eStep := SP_RunStp1;
+							END_IF
+						SP_RunStp20 : (*Give Part*)
+							CASE sRunData.eModule OF
+								LMP_Reject, LMP_Sample:
+									IF sPartDataMMI.bDropInBox THEN
+										ZPosition := alrRobotPos[LTA_Z,LTP_RejectBulkBox];
+									ELSE
+										ZPosition := ZPositionTakeGive + sPartDataMMI.lrPartOffsetZLiftDrop;
+									END_IF
+									IF ZPosition > aTRobotAxis[LA_Z1+iHead].lrMaxPos THEN
+										ZPosition := aTRobotAxis[LA_Z1+iHead].lrMaxPos;
+									END_IF
+									bUseGiveTake := FALSE;
+									eDropMode := LDM_DropAndGoUp;
+								LMP_Lift2:
+									IF sPartDataMMI.bDropInBox THEN
+										ZPosition := alrRobotPos[LTA_Z,LTP_BulkBox];
+									ELSE
+										ZPosition := ZPositionTakeGive + sPartDataMMI.lrPartOffsetZLiftDrop;
+									END_IF
+									bUseGiveTake := FALSE;
+									eDropMode := LDM_DropAndGoUp;
+								LMP_Table:
+									ZPosition := ZPositionTakeGive + sPartDataMMI.lrPartOffsetZLayeringDrop;
+									bUseGiveTake := TRUE;
+									eDropMode := sPartDataMMI.eDropModeTable;
+								LMP_TurnOverArm:
+									ZPosition := ZPositionTakeGive + sPartDataMMI.lrPartOffsetZLayeringDrop;
+									bUseGiveTake := TRUE;
+									eDropMode := sPartDataMMI.eDropModeTurnOver;
+								ELSE
+									ZPosition := alrSecuredSafeZPos[iHead];
+									bUseGiveTake := FALSE;
+									eDropMode := LDM_DropAndGoUp;
+							END_CASE
+							IF  bUseGiveTake THEN
+								sOutGiveToModule.TPartData := sRunData.aTPartData[iHead];
+								IF eDropMode <> LDM_WaitDownAndDrop THEN
+									sOutGiveToModule.bPartDataReady := TRUE;
+								END_IF
+							END_IF
+							sCurrentState.eStep := SP_RunStp21;
+						SP_RunStp21 :
+							IF sInGiveToModule.bReadyToTake  OR NOT bUseGiveTake  THEN
+								alrTargetPos[LA_Z1+iHead] := ZPosition;
+								aeMoveRobotCommand[LA_Z1+iHead] := AC_MoveAtAbsPos;
+								sCurrentState.eStep := SP_RunStp22;
+							END_IF
+						SP_RunStp22 :  (*Movement done*)
+							IF (sRunData.eModule = LMP_Reject OR  sRunData.eModule = LMP_Sample) AND sRejectRunData.eRejectStatus<>RS_Locked THEN
+								aeMoveRobotCommand[LA_Z1+iHead] := AC_ForceStop;
+							END_IF
+							IF aTRobotAxis[LA_Z1+iHead].eCurrentState = AS_InPosition THEN
+								sOutGiveToModule.bPartDataReady := TRUE;
+								CASE eDropMode OF
+									LDM_DropAndGoUp, LDM_DropAndWaitDown :
+										abEnableHeadVacuum[iHead] := FALSE;
+								END_CASE
+								sCurrentState.eStep := SP_RunStp23;
+							END_IF
+						SP_RunStp23:
+							(* Check if laying vacuum is disabled *)
+							IF (sRunData.eModule = LMP_Reject OR  sRunData.eModule = LMP_Sample) AND sRejectRunData.eRejectStatus<>RS_Locked THEN
+								aeMoveRobotCommand[LA_Z1+iHead] := AC_ForceStop;
+							END_IF
+							IF aTHeadVacuum[iHead].bVacuumCorrect THEN
+								IF sRunData.eModule = LMP_Lift2  OR sRunData.eModule = LMP_Sample OR sRunData.eModule = LMP_Reject THEN
+									sRunData.aTPartData[iHead].iPlateOutPos := iPlatePos;
+									sRunData.aTPartData[iHead].dwPlateOutQRCode := dwRejectPlateNb;
+									sRunData.aTPartData[iHead].dwProductionOutTime := TIME_TO_DWORD(TJobElapsed);
+									sRunData.aTPartData[iHead].dwProductionTime := sRunData.aTPartData[iHead].dwProductionOutTime - sRunData.aTPartData[iHead].dwProductionInTime;
+									sRunData.aTPartData[iHead].bSample := (sRunData.eModule = LMP_Sample);
+									sMachineCnt.dTotal := sMachineCnt.dTotal + 1;
+									sProdLot.dProdQty := sProdLot.dProdQty + 1;
+									IF sRunData.eModule = LMP_Lift2 OR sRunData.eModule = LMP_Sample THEN
+										sMachineCnt.dGood := sMachineCnt.dGood + 1;
+										sProdLot.dGoodQty := sProdLot.dGoodQty + 1;
+									END_IF
+									IF sRunData.eModule = LMP_Lift2 AND NOT sPartDataMMI.bDropInBox THEN
+ 										aTPartOnPlate[ LPP_Lift2,iPlatePos].ePartStatus := PPS_Present;
+									ELSIF sRunData.eModule = LMP_Sample THEN
+										aTPartOnPlate[ LPP_Reject,iPlatePos].ePartStatus := PPS_Present;
+									ELSIF sRunData.eModule = LMP_Reject THEN
+										aTPartOnPlate[ LPP_Reject,iPlatePos].ePartStatus := PPS_Present;
+									END_IF
+									IF C_PROD_MODE_GOOD_PART THEN
+										sProdLot.dEstimatedPartTime := TIME_TO_DWORD(TJobElapsed)  / sProdLot.dGoodQty;
+										sHMIPartData.bEndOfProd := sProdLot.dGoodQty >= sProdLot.dLotQty;
+									ELSE
+										sProdLot.dEstimatedPartTime := TIME_TO_DWORD(TJobElapsed)  / sProdLot.dProdQty;
+										sHMIPartData.bEndOfProd := sProdLot.dProdQty >= sProdLot.dLotQty;
+									END_IF
+									sHMIPartData.sPartStatus := sRunData.aTPartData[iHead];
+									sHMIPartData.bPartReady := TRUE;
+								END_IF
+								CASE eDropMode OF
+									LDM_DropAndGoUp:
+										alrTargetPos[LA_Z1+iHead] := alrSecuredSafeZPos[iHead];
+										aeMoveRobotCommand[LA_Z1+iHead] := AC_MoveAtAbsPos;
+								END_CASE
+								sCurrentState.eStep := SP_RunStp24;
+							END_IF
+						SP_RunStp24 :
+							IF (sRunData.eModule = LMP_Reject OR  sRunData.eModule = LMP_Sample) AND sRejectRunData.eRejectStatus<>RS_Locked THEN
+								aeMoveRobotCommand[LA_Z1+iHead] := AC_ForceStop;
+							END_IF
+							IF aTRobotAxis[LA_Z1+iHead].eCurrentState = AS_InPosition THEN
+								IF (sRunData.eModule = LMP_Reject OR sRunData.eModule = LMP_Sample) AND eRejectRunStatus = RS_WaitRequest AND sRejectRunData.eRejectStatus=RS_Locked THEN
+									eRejectRunCmd := RCR_UnlockDrawer;
+								END_IF
+								sOutGiveToModule.bHasGiven := TRUE;
+								sCurrentState.eStep := SP_RunStp25;
+							END_IF
+						SP_RunStp25 :
+							(* Check if right loader has taken the plate *)
+							IF sInGiveToModule.bHasTaken  OR NOT bUseGiveTake THEN
+								abEnableHeadVacuum[iHead] := FALSE;
+								sCurrentState.eStep := SP_RunStp26;
+							ELSIF sInGiveToModule.bHasNotTaken THEN
+								sCurrentState.eStep := SP_RunStp28;
+							END_IF
+						SP_RunStp26 :
+							IF aTHeadVacuum[iHead].bVacuumCorrect  THEN
+								sRunData.aTPartData[iHead].bPartPresent := FALSE;
+								alrTargetPos[LA_Z1+iHead] := alrSecuredSafeZPos[iHead];
+								aeMoveRobotCommand[LA_Z1+iHead] := AC_MoveAtAbsPos;
+								sCurrentState.eStep := SP_RunStp27;
+							END_IF
+						SP_RunStp27 :
+							IF aTRobotAxis[LA_Z1+iHead].eCurrentState = AS_InPosition OR
+									(bUse103171OptimB5MoveOnPreSafeZ AND  (aTRobotAxis[LA_Z1].lrCurrentPos < (alrSecuredSafeZPos[0]+lrPreSafeTolerance)))THEN
+								(* Remove HasGiven so table can check vacuum *)
+								sOutGiveToModule.bHasGiven := FALSE;
+								sCurrentState.eStep := SP_RunStp1;
+							END_IF
+						SP_RunStp28 :
+							abEnableHeadVacuum[iHead] := TRUE;
+							IF aTHeadVacuum[iHead].bVacuumCorrect  THEN
+								sRunData.aTPartData[iHead].bPartPresent := TRUE;
+								sRunData.aTPartData[iHead].bToReject:= TRUE;
+								alrTargetPos[LA_Z1+iHead] := alrSecuredSafeZPos[iHead];
+								aeMoveRobotCommand[LA_Z1+iHead] := AC_MoveAtAbsPos;
+								sCurrentState.eStep := SP_RunStp27;
+							END_IF
+						SP_RunStp30: (*Take Plate*)
+							alrSecuredTarget[LA_X] := alrRobotPos[LTA_X,LTP_Lift1] +alrRobotOffset[LTA_X, LTO_Plate] + alrLiftCalibrationOffset[LTP_Lift1,LTA_X] - sPlateData.alrTakePlatePos.lrX;
+							alrSecuredTarget[LA_Y] := alrRobotPos[LTA_Y,LTP_Lift1] +alrRobotOffset[LTA_Y, LTO_Plate] + alrLiftCalibrationOffset[LTP_Lift1,LTA_Y] - sPlateData.alrTakePlatePos.lrY;
+							eReturnStep4SecureMove := SP_RunStp31;
+							sCurrentState.eStep := SP_RunStp550;
+						SP_RunStp31 :  (*Movement done*)
+							IF eRobotXYTStatus = AS_InPosition THEN
+								bMovePlateTakerDown := TRUE;
+								sCurrentState.eStep := SP_RunStp32;
+							END_IF
+						SP_RunStp32 :   (*Take plate *)
+							IF bPlateTakerIsDown THEN
+								bEnablePlateVacuum := TRUE;
+								sCurrentState.eStep := SP_RunStp33;
+							END_IF
+						SP_RunStp33 :
+							IF TPlateVacuum.bVacuumCorrect THEN
+								sRunData.bPlatePresent := TRUE;
+								bMovePlateTakerDown := FALSE;
+								sCurrentState.eStep := SP_RunStp34;
+							END_IF
+						SP_RunStp34 :
+							IF bPlateTakerIsUp THEN
+								sCurrentState.eStep := eReturnStep;
+							END_IF
+						SP_RunStp40: (*Give Plate*)
+							alrRobotSpeed[LA_X] := lrSpeedWithPlate;
+							alrRobotSpeed[LA_Y] := lrSpeedWithPlate;
+							alrSecuredTarget[LA_X] := alrRobotPos[LTA_X,LTP_Lift2] +alrRobotOffset[LTA_X, LTO_Plate] + alrLiftCalibrationOffset[LTP_Lift2,LTA_X] - sPlateData.alrTakePlatePos.lrX - 1.5;
+							alrSecuredTarget[LA_Y] := alrRobotPos[LTA_Y,LTP_Lift2] +alrRobotOffset[LTA_Y, LTO_Plate] + alrLiftCalibrationOffset[LTP_Lift2,LTA_Y] - sPlateData.alrTakePlatePos.lrY + 0;
+							eReturnStep4SecureMove := SP_RunStp41;
+							sCurrentState.eStep := SP_RunStp550;
+						SP_RunStp41 :  (*Movement done*)
+							IF eRobotXYTStatus = AS_InPosition THEN
+								alrRobotSpeed := alrMaxRobotSpeed;
+								bMovePlateTakerDown := TRUE;
+								sCurrentState.eStep := SP_RunStp42;
+							END_IF
+						SP_RunStp42 :   (*Drop plate *)
+							IF bPlateTakerIsDown THEN
+								bEnablePlateVacuum := FALSE;
+								sRunData.bPlatePresent := FALSE;
+								sCurrentState.eStep := SP_RunStp43;
+							END_IF
+						SP_RunStp43 :
+							IF TPlateVacuum.bVacuumCorrect THEN
+								bMovePlateTakerDown := FALSE;
+								sCurrentState.eStep := SP_RunStp44;
+							END_IF
+						SP_RunStp44 :
+							IF bPlateTakerIsUp THEN
+								sCurrentState.eStep := eReturnStep;
+							END_IF
+						SP_RunStp50: (*Move To Safe*)
+							IF aTRobotAxis[LA_Y].lrCurrentPos <= alrYSafePosDuringRun THEN
+								(* No need to move, already safe *)
+								sCurrentState.eStep := SP_RunStp1;
+							ELSE
+								// Use secured area X
+								alrSecuredTarget[LA_X] := alrUnsecuredArea[1,LA_X];
+								alrSecuredTarget[LA_Y] := alrYSafePosDuringRun;
+								eReturnStep4SecureMove := SP_RunStp51;
+								sCurrentState.eStep := SP_RunStp550;
+							END_IF
+						SP_RunStp51 :  (*Movement done*)
+							IF eRobotXYTStatus = AS_InPosition THEN
+								sCurrentState.eStep := SP_RunStp1;
+							END_IF
+						SP_RunStp60: (*Cleaning*)
+							IF aTRobotAxis[LA_X].lrCurrentPos <= alrRobotPos[LTA_X,LTP_CleanBrush] +alrRobotOffset[LTA_X, LTO_Z1+iHead] THEN
+								alrSecuredTarget[LA_X] := alrRobotPos[LTA_X,LTP_CleanBrush] +alrRobotOffset[LTA_X, LTO_Z1+iHead] - alrCleaningOffset;
+								bCleaningFromNegToPos := TRUE;
+							ELSE
+								alrSecuredTarget[LA_X] := alrRobotPos[LTA_X,LTP_CleanBrush] +alrRobotOffset[LTA_X, LTO_Z1+iHead] + alrCleaningOffset;
+								bCleaningFromNegToPos := FALSE;
+							END_IF
+							alrSecuredTarget[LA_Y] := alrRobotPos[LTA_Y,LTP_CleanBrush] +alrRobotOffset[LTA_Y, LTO_Z1+iHead];
+							alrTargetPos[LA_THETA] := alrRobotPos[LTA_THETA,LTP_CleanBrush] + alrRobotOffset[LTA_THETA, LTO_Z1+iHead] + lrCleaningThetaAngle;
+							aeMoveRobotCommand[LA_THETA] := AC_MoveAtAbsPos;
+							eReturnStep4SecureMove := SP_RunStp61;
+							sCurrentState.eStep := SP_RunStp550;
+						SP_RunStp61:
+							IF eRobotXYTStatus = AS_InPosition THEN
+								alrTargetPos[LA_Z1+iHead] := alrRobotPos[LTA_Z,LTP_CleanBrush] +alrRobotOffset[LTA_Z, LTO_Z1+iHead] - (sPartDataMMI.lrPartAndHeadHeight -  lrCalibrationPartAndHeadHeight) + sPartDataMMI.lrPartOffsetZCleaning;
+								aeMoveRobotCommand[LA_Z1+iHead] := AC_MoveAtAbsPos;
+								sCurrentState.eStep := SP_RunStp62;
+							END_IF
+						SP_RunStp62:  (*Start cleaning the part *)
+							IF aTRobotAxis[LA_Z1+iHead].eCurrentState = AS_InPosition THEN
+								bAspirationBrushOn := TRUE;
+								alrRobotSpeed[LA_X] := lrCleaningXSpeed;
+								alrRobotSpeed[LA_THETA] := lrCleaningThetaSpeed;
+								IF bCleaningFromNegToPos THEN
+									alrSecuredTarget[LA_X] := alrRobotPos[LTA_X,LTP_CleanBrush] +alrRobotOffset[LTA_X, LTO_Z1+iHead] + alrCleaningOffset;
+								ELSE
+									alrSecuredTarget[LA_X] := alrRobotPos[LTA_X,LTP_CleanBrush] +alrRobotOffset[LTA_X, LTO_Z1+iHead] - alrCleaningOffset;
+								END_IF
+								bCleaningThetaCw := TRUE;
+								bCleaningStopTheta := FALSE;
+								eReturnStep4SecureMove := SP_RunStp63;
+								sCurrentState.eStep := SP_RunStp550;
+							END_IF
+						SP_RunStp63: (*Cleaning the part with rotation *)
+							IF aTRobotAxis[LA_X].eCurrentState = AS_InPosition THEN
+								IF aTRobotAxis[LA_THETA].eCurrentState = AS_InPosition THEN
+									alrRobotSpeed := alrMaxRobotSpeed;
+									bAspirationBrushOn := FALSE;
+									sCurrentState.eStep := SP_RunStp64;
+								ELSIF NOT bCleaningStopTheta THEN (* Stop theta*)
+									bCleaningStopTheta := TRUE;
+									aeMoveRobotCommand[LA_THETA] := AC_Stop;
+								END_IF
+							ELSIF aTRobotAxis[LA_THETA].eCurrentState = AS_InPosition THEN
+								bCleaningThetaCw := NOT bCleaningThetaCw;
+								IF bCleaningThetaCw THEN
+									alrTargetPos[LA_THETA] := alrRobotPos[LTA_THETA,LTP_CleanBrush] + alrRobotOffset[LTA_THETA, LTO_Z1+iHead] + lrCleaningThetaAngle;
+								ELSE
+									alrTargetPos[LA_THETA] := alrRobotPos[LTA_THETA,LTP_CleanBrush] + alrRobotOffset[LTA_THETA, LTO_Z1+iHead] - lrCleaningThetaAngle;
+								END_IF
+								aeMoveRobotCommand[LA_THETA] := AC_MoveAtAbsPos;
+							END_IF
+						SP_RunStp64:
+							alrTargetPos[LA_Z1+iHead] := alrSecuredSafeZPos[iHead];
+							aeMoveRobotCommand[LA_Z1+iHead] := AC_MoveAtAbsPos;
+							sCurrentState.eStep := SP_RunStp65;
+						SP_RunStp65 :
+							IF aTRobotAxis[LA_Z1+iHead].eCurrentState = AS_InPosition OR
+									(bUse103171OptimB5MoveOnPreSafeZ AND  (aTRobotAxis[LA_Z1].lrCurrentPos < (alrSecuredSafeZPos[0]+lrPreSafeTolerance)))THEN
+								sCurrentState.eStep := SP_RunStp1;
+							END_IF
+						SP_RunStp70: (* Switch plate (Lift1 must be ready for take plate ) *)
+							eReturnStepSwitchPlate := eReturnStep;
+							sCurrentState.eStep := SP_RunStp71;
+						SP_RunStp71: (*Lift move to load pos *)
+							IF eLift1RunStatus = RS_WaitRequest THEN
+								CASE sLift1RunData.eLiftPos OF
+									LP_OnPlateLoad:
+										bDoNothing := bDoNothing;
+									LP_Empty,LP_Full:
+										bLift1NeedsPlate := TRUE;
+										eLift1RunCmd := RCL_MoveToOpenDrawer;
+									ELSE
+										eLift1RunCmd := RCL_MoveToLoadPlate;
+								END_CASE
+							END_IF
+							IF eLift2RunStatus = RS_WaitRequest THEN
+								CASE sLift2RunData.eLiftPos OF
+									LP_OnPlateLoad:
+										bDoNothing := bDoNothing;
+									LP_Full:
+										bLift2NeedsPlate := TRUE;
+										eLift2RunCmd := RCL_MoveToOpenDrawer;
+									ELSE
+										eLift2RunCmd := RCL_MoveToLoadPlate;
+								END_CASE
+							END_IF
+							IF eLift1RunStatus = RS_WaitRequest AND sLift1RunData.eLiftPos = LP_OnPlateLoad AND
+								eLift2RunStatus = RS_WaitRequest AND sLift2RunData.eLiftPos = LP_OnPlateLoad THEN
+								sCurrentState.eStep := SP_RunStp72;
+							END_IF
+						SP_RunStp72:
+							IF NOT sRunData.bPlatePresent THEN
+								//abCopySwitchFromPlate := TRUE;
+								abResetPlateState[LPP_Lift1] := TRUE;
+								sCurrentState.eStep := SP_RunStp30; (* Call Take plate *)
+								eReturnStep := SP_RunStp72;
+							ELSE
+								sCurrentState.eStep := SP_RunStp73;
+							END_IF
+						SP_RunStp73:
+							abResetPlateState[LPP_Lift2] := TRUE;
+							sCurrentState.eStep := SP_RunStp40; (* Call Give plate *)
+							eReturnStep := SP_RunStp74;
+						SP_RunStp74:
+							FOR i := 0 TO sPlateData.iNbPartOnPlate-1 DO
+								aTPartOnPlate[LPP_Lift2,i].ePartStatus := PPS_Absent;
+							END_FOR
+							//abCopySwitchToPlate := TRUE;
+							iPlatePos := 0;
+							eLift1RunCmd := RCL_MoveToPlate;
+							eLift2RunCmd := RCL_MoveToPlate;
+							sCurrentState.eStep := SP_RunStp75;
+						SP_RunStp75: (*Lift move to plate pos *)
+							IF eLift1RunStatus = RS_WaitRequest AND eLift2RunStatus = RS_WaitRequest THEN
+								sCurrentState.eStep := eReturnStepSwitchPlate;
+							END_IF
+						SP_RunStp100 : (*Prepare for take part*)
+						testLD := sRunData.eModule;
+							CASE sRunData.eModule OF
+								LMP_Lift1:
+									sCurrentState.eStep := SP_RunStp101;
+								LMP_Table:
+									sCurrentState.eStep := SP_RunStp170;
+								LMP_TurnOverFix:
+									sCurrentState.eStep := SP_RunStp180;
+							END_CASE
+						SP_RunStp101: (* Check Lift Status*)
+							IF eLift1RunStatus = RS_WaitRequest THEN
+								CASE sLift1RunData.eLiftPos OF
+									LP_OnPlate:
+										iPlatePos := 0;
+										sCurrentState.eStep := SP_RunStp102;
+									LP_Full,LP_Empty:
+										bLift1NeedsPlate := TRUE;
+										eLift1RunCmd := RCL_MoveToOpenDrawer;
+									ELSE
+										eLift1RunCmd := RCL_MoveToPlate;
+								END_CASE
+							END_IF
+						SP_RunStp102: (*Check part status*)
+							bFoundPlatePos := FALSE;
+							WHILE (iPlatePos < sPlateData.iNbPartOnPlate) DO
+								IF aTPartOnPlate[LPP_Lift1,iPlatePos].ePartStatus = PPS_Present OR aTPartOnPlate[LPP_Lift1,iPlatePos].ePartStatus = PPS_Undefined THEN
+									bFoundPlatePos := TRUE;
+									EXIT;
+								ELSE
+									iPlatePos := iPlatePos + 1;
+								END_IF
+							END_WHILE
+							IF NOT bFoundPlatePos THEN
+								(* Goto switch plate *)
+								sCurrentState.eStep := SP_RunStp150;
+							ELSE
+								IF bDisableVision THEN
+									aTPartOnPlate[LPP_Lift1,iPlatePos].ePartStatus := PPS_Present;
+									sCurrentState.eStep := SP_RunStp110;
+								ELSE
+									bRetryVision := TRUE;
+									iScanTry := 0;
+									sCurrentState.eStep := SP_RunStp103;
+								END_IF
+							END_IF
+						SP_RunStp103: (*Scan Vision Part Position *)
+							alrSecuredTarget[LA_X] := alrRobotPos[LTA_X,LTP_Lift1] + alrRobotOffset[LTA_X, LTO_Vision] + alrLiftCalibrationOffset[LTP_Lift1,LTA_X]  - sPlateData.alrPartOnPlate[iPlatePos].lrX ;
+							alrSecuredTarget[LA_Y] := alrRobotPos[LTA_Y,LTP_Lift1] + alrRobotOffset[LTA_Y, LTO_Vision] + alrLiftCalibrationOffset[LTP_Lift1,LTA_Y] - sPlateData.alrPartOnPlate[iPlatePos].lrY ;
+							TVisionWaitStab(IN := FALSE);
+							iVisionScanModel := 0;
+							eReturnStep4SecureMove := SP_RunStp104;
+							sCurrentState.eStep := SP_RunStp550;
+						SP_RunStp104:
+							IF eRobotXYTStatus = AS_InPosition THEN
+								TVisionWaitStab(IN := TRUE, PT := TVisionWaitStabTime);
+								IF TVisionWaitStab.Q THEN
+									eVisionRunCmd := RCV_GrabImage;
+									sCurrentState.eStep := SP_RunStp105;
+								END_IF
+							END_IF
+						SP_RunStp105: (* Move to pre-take position *)
+							IF eVisionRunStatus = RS_WaitRequest THEN
+								IF bUse103171OptimB5PreMoveXY THEN
+									alrSecuredTarget[LA_X] := alrRobotPos[LTA_X,LTP_Lift1] + alrRobotOffset[LTA_X, iHead] + alrLiftCalibrationOffset[LTP_Lift1,LTA_X]  -  sPlateData.alrPartOnPlate[iPlatePos].lrX;
+									alrSecuredTarget[LA_Y] := alrRobotPos[LTA_Y,LTP_Lift1] + alrRobotOffset[LTA_Y, iHead] + alrLiftCalibrationOffset[LTP_Lift1,LTA_Y] - sPlateData.alrPartOnPlate[iPlatePos].lrY;
+									alrTargetPos[LA_THETA] := alrRobotPos[LTA_THETA,LTP_TableSideALayering1] + alrRobotOffset[LTA_THETA, iHead];
+									aeMoveRobotCommand[LA_THETA] := AC_MoveAtAbsPos;
+								END_IF
+								sRunDataVision.iUseModel := aiVisionModelPart[iVisionScanModel];
+								eVisionRunCmd := RCV_AnalyseImage;
+								eReturnStep4SecureMove := SP_RunStp109;
+								sCurrentState.eStep := SP_RunStp550;
+							END_IF
+						SP_RunStp109: (* Check for part *)
+							IF eVisionRunStatus = RS_WaitRequest THEN
+								IF sRunDataVision.TVisionPartData.bPresent AND sRunDataVision.TVisionPartData.bValid THEN
+									(* Found valide part *)
+									bBadPartDetected := FALSE;
+									aTPartOnPlate[LPP_Lift1,iPlatePos].ePartStatus := PPS_Present;
+									sCurrentState.eStep := SP_RunStp110;
+								ELSIF sRunDataVision.TVisionPartData.bPresent AND NOT sRunDataVision.TVisionPartData.bValid THEN
+									(* Found bad part *)
+									IF iScanTry < iScanTryMax THEN
+										iScanTry := iScanTry + 1;
+										bBadPartDetected := FALSE;
+										sCurrentState.eStep := SP_RunStp103;
+									ELSE
+										aTPartOnPlate[LPP_Lift1,iPlatePos].ePartStatus := PPS_BadPart;
+										//iPlatePos := iPlatePos + 1;
+										//sCurrentState.eStep := SP_RunStp102;
+										bBadPartDetected := TRUE;
+										sCurrentState.eStep := SP_RunStp110;
+									END_IF
+									
+								ELSE
+									(* No part *)
+									aTPartOnPlate[LPP_Lift1,iPlatePos].ePartStatus := PPS_Absent;
+									iPlatePos := iPlatePos + 1;
+									sCurrentState.eStep := SP_RunStp102;
+
+(*								ELSIF iVisionScanModel=0 THEN
+									(* found nothing, check if there is a part *)
+									IF bRetryVision THEN
+										sCurrentState.eStep := SP_RunStp103;
+										bRetryVision := FALSE;
+									ELSE
+										sCurrentState.eStep := SP_RunStp120;
+									END_IF
+								ELSIF iVisionScanModel < iMaxScanVisionModelPart THEN
+									(* relaunch scan with next step model *)
+									iVisionScanModel := iVisionScanModel + 1;
+									sCurrentState.eStep := SP_RunStp105;
+								ELSE
+									(* Part cannot be recognize, skip to next one *)
+									aTPartOnPlate[LPP_Lift1,iPlatePos].ePartStatus := PPS_BadPart;
+									iPlatePos := iPlatePos + 1;
+									sCurrentState.eStep := SP_RunStp102;
+*)								END_IF
+							END_IF
+						SP_RunStp110: (* Found valid position, Get Z position *)
+							IF bUse103171OptimB3 THEN
+								IF (alrZLiftPos[LTP_Lift1] = 0) THEN
+									eScanPos := LTP_Lift1;
+									eReturnStepMeasureZLift := SP_RunStp110;
+									sCurrentState.eStep := SP_RunStp500;
+								ELSE
+									ZPositionTakeGive := alrRobotPos[LTA_Z,LTP_TableSideALayering1] + alrRobotOffset[LTA_Z, iHead] + (lrCalibrationPartAndHeadHeight - sPartDataMMI.lrPartAndHeadHeight) - alrZLiftPos[LTP_Lift1] - lrZSensorCalibrationOffset;
+									sCurrentState.eStep := SP_RunStp114;
+								END_IF
+							ELSE
+								iZSensorPositionScan := 0;
+								sCurrentState.eStep := SP_RunStp111;
+							END_IF
+						SP_RunStp111:
+							alrSecuredTarget[LA_X] := alrRobotPos[LTA_X,LTP_Lift1] + alrRobotOffset[LTA_X, LTO_ZSensor] + alrLiftCalibrationOffset[LTP_Lift1,LTA_X]  -  sPlateData.alrPartOnPlate[iPlatePos].lrX - sPartDataMMI.alrSensorZOffset[iZSensorPositionScan].lrX;
+							alrSecuredTarget[LA_Y] :=alrRobotPos[LTA_Y,LTP_Lift1] + alrRobotOffset[LTA_Y, LTO_ZSensor] + alrLiftCalibrationOffset[LTP_Lift1,LTA_Y] - sPlateData.alrPartOnPlate[iPlatePos].lrY - sPartDataMMI.alrSensorZOffset[iZSensorPositionScan].lrY;
+							TSensorZWaitStab(IN := FALSE);
+							sCurrentState.bWaitStep := TRUE;
+							eReturnStep4SecureMove := SP_RunStp112;
+							sCurrentState.eStep := SP_RunStp550;
+						SP_RunStp112:
+							IF eRobotXYTStatus = AS_InPosition THEN
+								TSensorZWaitStab(IN := TRUE, PT := TSensorZWaitStabTime);
+								IF TSensorZWaitStab.Q THEN
+									IF TSensorMeasure.bInputOutOfRange THEN
+										bZSensorOutOfRangeError := TRUE;
+									END_IF
+									lrZSensorPosition[iZSensorPositionScan] := TSensorMeasure.lrValue;
+									IF iZSensorPositionScan = 0 AND (sPartDataMMI.alrSensorZOffset[1].lrX<>0 OR sPartDataMMI.alrSensorZOffset[1].lrY<>0) THEN
+										iZSensorPositionScan := iZSensorPositionScan + 1;
+										sCurrentState.eStep := SP_RunStp111;
+									ELSE
+										sCurrentState.eStep := SP_RunStp113;
+									END_IF
+								END_IF
+							END_IF
+						SP_RunStp113:
+							IF iZSensorPositionScan = 1 THEN
+								(* We used two position, mean the value *)
+								ZPositionTakeGive := (lrZSensorPosition[0] + lrZSensorPosition[1]) / 2;
+							ELSE
+								(* Only one position, use the first one then *)
+								ZPositionTakeGive := lrZSensorPosition[0];
+							END_IF
+							ZPositionTakeGive := alrRobotPos[LTA_Z,LTP_TableSideALayering1] + alrRobotOffset[LTA_Z, iHead] + (lrCalibrationPartAndHeadHeight - sPartDataMMI.lrPartAndHeadHeight) - ZPositionTakeGive;
+							sCurrentState.eStep := SP_RunStp114;
+						SP_RunStp114: (* Move to take position *)
+							IF sRunDataVision.TVisionPartData.bPresent AND NOT sRunDataVision.TVisionPartData.bValid THEN
+								alrSecuredTarget[LA_X] := alrRobotPos[LTA_X,LTP_Lift1] + alrRobotOffset[LTA_X, iHead] + alrLiftCalibrationOffset[LTP_Lift1,LTA_X]  -  sPlateData.alrPartOnPlate[iPlatePos].lrX;	// + INT(iPlatePos/5) * 1/9 * offsetXMax;		// HFO : when vision diseable, correct the offset X between parts 
+								alrSecuredTarget[LA_Y] :=alrRobotPos[LTA_Y,LTP_Lift1] + alrRobotOffset[LTA_Y, iHead] + alrLiftCalibrationOffset[LTP_Lift1,LTA_Y] - sPlateData.alrPartOnPlate[iPlatePos].lrY;	// + int(iPlatePos%5) * 1/4 * offsetYMax;		// HFO : when vision diseable, correct the offset Y between parts 
+								alrTargetPos[LA_THETA] := alrRobotPos[LTA_THETA,LTP_TableSideALayering1] + alrRobotOffset[LTA_THETA, iHead] - (-90);
+							ELSE
+								alrSecuredTarget[LA_X] := alrRobotPos[LTA_X,LTP_Lift1] + alrRobotOffset[LTA_X, iHead] + alrLiftCalibrationOffset[LTP_Lift1,LTA_X]  -  sPlateData.alrPartOnPlate[iPlatePos].lrX + sRunDataVision.TVisionPartData.lrX;
+								alrSecuredTarget[LA_Y] :=alrRobotPos[LTA_Y,LTP_Lift1] + alrRobotOffset[LTA_Y, iHead] + alrLiftCalibrationOffset[LTP_Lift1,LTA_Y] - sPlateData.alrPartOnPlate[iPlatePos].lrY + sRunDataVision.TVisionPartData.lrY;
+								alrTargetPos[LA_THETA] := alrRobotPos[LTA_THETA,LTP_TableSideALayering1] + alrRobotOffset[LTA_THETA, iHead] + (360 - sRunDataVision.TVisionPartData.lrTheta);
+							END_IF
+							aeMoveRobotCommand[LA_THETA] := AC_MoveAtAbsPos;
+							eReturnStep4SecureMove := SP_RunStp115;
+							sCurrentState.eStep := SP_RunStp550;
+						SP_RunStp115:
+							IF eRobotXYTStatus = AS_InPosition THEN
+								sCurrentState.eStep := SP_RunStp1;
+							END_IF
+						SP_RunStp120: (*Scan Vision Empty position *)
+							sRunDataVision.iUseModel := iVisionModelEmpty;
+							eVisionRunCmd := RCV_AnalyseImage;
+							sCurrentState.eStep := SP_RunStp121;
+						SP_RunStp121: (* Check for empty position *)
+							IF eVisionRunStatus = RS_WaitRequest THEN
+								IF NOT sRunDataVision.TVisionPartData.bPresent THEN
+									(* Found Empty Position *)
+									aTPartOnPlate[LPP_Lift1,iPlatePos].ePartStatus := PPS_Absent;
+									iPlatePos := iPlatePos + 1;
+									sCurrentState.eStep := SP_RunStp102;
+								ELSE
+									(*  Position is not empty, part is not recognize*)
+									iVisionScanModel := iVisionScanModel + 1;
+									sCurrentState.eStep := SP_RunStp104;
+								END_IF
+							END_IF
+						SP_RunStp150: (* Switch plate *)
+							bInvalidPlate := FALSE;
+							FOR iPlatePos := 0 TO sPlateData.iNbPartOnPlate-1 DO
+								IF aTPartOnPlate[LPP_Lift1,iPlatePos].ePartStatus = PPS_BadPart THEN
+//									bInvalidPlate := TRUE;
+									EXIT;
+								END_IF
+							END_FOR
+							IF bInvalidPlate THEN
+								(* goto invalid plate *)
+								bLift1Lift1BadPlate := TRUE;
+								eLift1RunCmd := RCL_MoveToOpenDrawer;
+								sCurrentState.eStep := SP_RunStp101;
+							ELSE
+								sCurrentState.eStep := SP_RunStp70; (* Call Switch Plate *)
+								eReturnStep := SP_RunStp101;
+							END_IF
+						SP_RunStp170: (*Get from Table *)
+							IF eTableSide = TS_A THEN
+								IF sRunData.iLayringPos = 0 THEN
+									ePos := LTP_TableSideALayering1;
+								ELSE
+									ePos := LTP_TableSideALayering2;
+								END_IF
+							ELSE
+								IF sRunData.iLayringPos = 0 THEN
+									ePos := LTP_TableSideBLayering1;
+								ELSE
+									ePos := LTP_TableSideBLayering2;
+								END_IF
+							END_IF
+							alrSecuredTarget[LA_X] := alrRobotPos[LTA_X,ePos] + alrRobotOffset[LTA_X, iHead];
+							alrSecuredTarget[LA_Y] :=  alrRobotPos[LTA_Y,ePos] + alrRobotOffset[LTA_Y, iHead];
+							alrTargetPos[LA_THETA] := alrRobotPos[LTA_THETA,ePos] + alrRobotOffset[LTA_THETA, iHead];
+							ZPositionTakeGive := alrRobotPos[LTA_Z,ePos] + alrRobotOffset[LTA_Z, iHead];
+							alrSecuredTarget[LA_X] := alrSecuredTarget[LA_X]   -  sPartDataMMI.alrPartOffsetLayering[sRunData.iLayringOffsetPos].lrX;
+							alrSecuredTarget[LA_Y] := alrSecuredTarget[LA_Y]  + sPartDataMMI.alrPartOffsetLayering[sRunData.iLayringOffsetPos].lrY;
+							ZPositionTakeGive := ZPositionTakeGive + (lrCalibrationLayeringAndPartAndHeadHeight - sPartDataMMI.lrLayeringAndPartAndHeadHeight);
+							aeMoveRobotCommand[LA_THETA] := AC_MoveAtAbsPos;
+							eReturnStep4SecureMove := SP_RunStp171;
+							sCurrentState.eStep := SP_RunStp550;
+						SP_RunStp171:
+							IF eRobotXYTStatus = AS_InPosition THEN
+								sCurrentState.eStep := SP_RunStp1;
+							END_IF
+						SP_RunStp180: (*Get from Turn Over *)
+							alrSecuredTarget[LA_X] := alrRobotPos[LTA_X,LTP_TurnOverFix] + alrRobotOffset[LTA_X, iHead];
+							alrSecuredTarget[LA_Y] :=  alrRobotPos[LTA_Y,LTP_TurnOverFix] + alrRobotOffset[LTA_Y, iHead];
+							alrTargetPos[LA_THETA] := alrRobotPos[LTA_THETA,LTP_TurnOverFix] + alrRobotOffset[LTA_THETA, iHead];
+							ZPositionTakeGive := alrRobotPos[LTA_Z,LTP_TurnOverFix] + alrRobotOffset[LTA_Z, iHead];
+							ZPositionTakeGive := ZPositionTakeGive +  (lrCalibrationLayeringAndPartAndHeadHeight - sPartDataMMI.lrLayeringAndPartAndHeadHeight);
+							aeMoveRobotCommand[LA_THETA] := AC_MoveAtAbsPos;
+							eReturnStep4SecureMove := SP_RunStp181;
+							sCurrentState.eStep := SP_RunStp550;
+						SP_RunStp181:
+							IF eRobotXYTStatus = AS_InPosition THEN
+								sCurrentState.eStep := SP_RunStp1;
+							END_IF
+						SP_RunStp200 : (*Prepare for Drop part*)
+							CASE sRunData.eModule OF
+								LMP_Reject, LMP_Sample:
+									sCurrentState.eStep := SP_RunStp301;
+								LMP_Lift2:
+									IF sPartDataMMI.bDropInBox THEN
+										sCurrentState.eStep := SP_RunStp230;
+									ELSE
+										sCurrentState.eStep := SP_RunStp201;
+									END_IF
+								LMP_Table:
+									sCurrentState.eStep := SP_RunStp270;
+								LMP_TurnOverArm:
+									sCurrentState.eStep := SP_RunStp280;
+							END_CASE
+						SP_RunStp201: (* Check Lift Status*)
+							IF eLift2RunStatus = RS_WaitRequest THEN
+								CASE sLift2RunData.eLiftPos OF
+									LP_OnPlate:
+										iPlatePos := 0;
+										sCurrentState.eStep := SP_RunStp202;
+									LP_Full,LP_Empty:
+										bLift2NeedsPlate := TRUE;
+										eLift2RunCmd := RCL_MoveToOpenDrawer;
+								ELSE
+									eLift2RunCmd := RCL_MoveToPlate;
+								END_CASE
+							END_IF
+						SP_RunStp202: (*Check part status*)
+							bFoundPlatePos := FALSE;
+							WHILE (iPlatePos < sPlateData.iNbPartOnPlate) DO
+								IF aTPartOnPlate[LPP_Lift2,iPlatePos].ePartStatus = PPS_Absent OR aTPartOnPlate[LPP_Lift2,iPlatePos].ePartStatus = PPS_Undefined THEN
+									bFoundPlatePos := TRUE;
+									EXIT;
+								ELSE
+									iPlatePos := iPlatePos + 1;
+								END_IF
+							END_WHILE
+							IF NOT bFoundPlatePos THEN
+								(* Goto switch plate *)
+								sCurrentState.eStep := SP_RunStp250;
+							ELSE
+								IF aTPartOnPlate[LPP_Lift2,iPlatePos].ePartStatus = PPS_Absent OR (NOT sPlateData.bUseVisionForDrop OR bDisableVision) THEN
+									sCurrentState.eStep := SP_RunStp210;
+								ELSE
+									sCurrentState.eStep := SP_RunStp203;
+								END_IF
+							END_IF
+						SP_RunStp203: (*Scan Vision Part Position *)
+							alrSecuredTarget[LA_X] := alrRobotPos[LTA_X,LTP_Lift2] + alrRobotOffset[LTA_X, LTO_Vision] + alrLiftCalibrationOffset[LTP_Lift2,LTA_X]  - sPlateData.alrPartOnPlate[iPlatePos].lrX ;
+							alrSecuredTarget[LA_Y] :=  alrRobotPos[LTA_Y,LTP_Lift2] + alrRobotOffset[LTA_Y, LTO_Vision] + alrLiftCalibrationOffset[LTP_Lift2,LTA_Y] - sPlateData.alrPartOnPlate[iPlatePos].lrY ;
+							iVisionScanModel := 0;
+							TVisionWaitStab(IN := FALSE);
+							eReturnStep4SecureMove := SP_RunStp204;
+							sCurrentState.eStep := SP_RunStp550;
+						SP_RunStp204:
+							IF eRobotXYTStatus = AS_InPosition THEN
+								IF aTPartOnPlate[LPP_Lift2,iPlatePos].ePartStatus = PPS_Absent THEN
+									sCurrentState.eStep := SP_RunStp208;
+								ELSE
+									TVisionWaitStab(IN := TRUE, PT := TVisionWaitStabTime);
+									IF TVisionWaitStab.Q THEN
+										eVisionRunCmd := RCV_GrabImage;
+										sCurrentState.eStep := SP_RunStp205;
+									END_IF
+								END_IF
+							END_IF
+						SP_RunStp205: (* Move to pre-drop position *)
+							IF eVisionRunStatus = RS_WaitRequest THEN
+								IF bUse103171OptimB5PreMoveXY THEN
+									alrSecuredTarget[LA_X] := alrRobotPos[LTA_X,LTP_Lift2] + alrRobotOffset[LTA_X, iHead] + alrLiftCalibrationOffset[LTP_Lift2,LTA_X]  -  sPlateData.alrPartOnPlate[iPlatePos].lrX;
+									alrSecuredTarget[LA_Y] :=alrRobotPos[LTA_Y,LTP_Lift2] + alrRobotOffset[LTA_Y, iHead] + alrLiftCalibrationOffset[LTP_Lift2,LTA_Y] - sPlateData.alrPartOnPlate[iPlatePos].lrY;
+									alrTargetPos[LA_THETA] := alrRobotPos[LTA_THETA,LTP_TableSideALayering1] + alrRobotOffset[LTA_THETA, iHead];
+									aeMoveRobotCommand[LA_THETA] := AC_MoveAtAbsPos;
+									eReturnStep4SecureMove := SP_RunStp207;
+									sCurrentState.eStep := SP_RunStp550;
+								ELSE
+									sCurrentState.eStep := SP_RunStp207;
+								END_IF
+								sRunDataVision.iUseModel := iVisionModelEmpty;
+								eVisionRunCmd := RCV_AnalyseImage;
+							END_IF
+						SP_RunStp207: (* Check for part *)
+							IF eVisionRunStatus = RS_WaitRequest THEN
+								IF NOT sRunDataVision.TVisionPartData.bPresent THEN
+									(* Found empty position *)
+									aTPartOnPlate[LPP_Lift2,iPlatePos].ePartStatus := PPS_Absent;
+									sCurrentState.eStep := SP_RunStp208;
+								ELSE
+									(* found something *)
+									aTPartOnPlate[LPP_Lift2,iPlatePos].ePartStatus := PPS_Present;
+									iPlatePos := iPlatePos + 1;
+									sCurrentState.eStep := SP_RunStp202;
+								END_IF
+							END_IF
+						SP_RunStp208: (*Scan Vision for position *)
+							IF sPlateData.bUseVisionForDrop THEN
+								sRunDataVision.iUseModel := aiVisionModelPlate[iVisionScanModel];
+								eVisionRunCmd := RCV_AnalyseImage;
+								sCurrentState.eStep := SP_RunStp209;
+							ELSE
+								sCurrentState.eStep := SP_RunStp210;
+							END_IF
+						SP_RunStp209: (* Get position *)
+							IF eVisionRunStatus = RS_WaitRequest THEN
+								IF (*sRunDataVision.TVisionPartData.bPresent AND*) sRunDataVision.TVisionPartData.bValid THEN
+									(* Found valide position *)
+									sCurrentState.eStep := SP_RunStp210;
+								(*ELSIF sRunDataVision.TVisionPartData.bPresent AND NOT sRunDataVision.TVisionPartData.bValid THEN
+									(* Found invalide part, relaunch with other model ??? not implemented right now*)
+									aTPartOnPlate[LPP_Lift2,iPlatePos].ePartStatus := PPS_BadPart;
+									iPlatePos := iPlatePos + 1;
+									sCurrentState.eStep := SP_RunStp202;*)
+								ELSIF iVisionScanModel < iMaxScanVisionModelPlate THEN
+									(* relaunch scan with next step model *)
+									iVisionScanModel := iVisionScanModel + 1;
+									sCurrentState.eStep := SP_RunStp208;
+								ELSE
+									(* Plate cannot be recognize, skip to next one *)
+									aTPartOnPlate[LPP_Lift2,iPlatePos].ePartStatus := PPS_BadPart;
+									iPlatePos := iPlatePos + 1;
+									sCurrentState.eStep := SP_RunStp202;
+								END_IF
+							END_IF
+						SP_RunStp210: (* Found valid position, Get Z position *)
+							IF bUse103171OptimB3 THEN
+								IF (alrZLiftPos[LTP_Lift2] = 0) THEN
+									eScanPos := LTP_Lift2;
+									eReturnStepMeasureZLift := SP_RunStp210;
+									sCurrentState.eStep := SP_RunStp500;
+								ELSE
+									ZPositionTakeGive := alrRobotPos[LTA_Z,LTP_TableSideALayering1] + alrRobotOffset[LTA_Z, iHead] + (lrCalibrationPartAndHeadHeight - sPartDataMMI.lrPartAndHeadHeight) - alrZLiftPos[LTP_Lift2] - lrZSensorCalibrationOffset;
+									//ZPositionTakeGive := alrRobotPos[LTA_Z,sRunData.eModule] + alrRobotOffset[LTA_Z, iHead] + (lrCalibrationPartAndHeadHeight - sPartDataMMI.lrPartAndHeadHeight) - alrZLiftPos[LTP_Lift2];
+									sCurrentState.eStep := SP_RunStp214;
+								END_IF
+							ELSE
+								iZSensorPositionScan := 0;
+								sCurrentState.eStep := SP_RunStp211;
+							END_IF
+						SP_RunStp211: (* Calcul de la position x et y de mesure hauteur *)
+							alrSecuredTarget[LA_X] := alrRobotPos[LTA_X,LTP_Lift2] + alrRobotOffset[LTA_X, LTO_ZSensor] + alrLiftCalibrationOffset[LTP_Lift2,LTA_X]  -  sPlateData.alrPartOnPlate[iPlatePos].lrX - sPartDataMMI.alrSensorZOffset[iZSensorPositionScan].lrX;
+							alrSecuredTarget[LA_Y] :=alrRobotPos[LTA_Y,LTP_Lift2] + alrRobotOffset[LTA_Y, LTO_ZSensor] + alrLiftCalibrationOffset[LTP_Lift2,LTA_Y] - sPlateData.alrPartOnPlate[iPlatePos].lrY - sPartDataMMI.alrSensorZOffset[iZSensorPositionScan].lrY;
+							TSensorZWaitStab(IN := FALSE);
+							eReturnStep4SecureMove := SP_RunStp212;
+							sCurrentState.eStep := SP_RunStp550;
+						SP_RunStp212:
+							IF eRobotXYTStatus = AS_InPosition THEN
+								TSensorZWaitStab(IN := TRUE, PT := TSensorZWaitStabTime);
+								IF TSensorZWaitStab.Q THEN
+									IF TSensorMeasure.bInputOutOfRange THEN
+										bZSensorOutOfRangeError := TRUE;
+									END_IF
+									lrZSensorPosition[iZSensorPositionScan] := TSensorMeasure.lrValue;
+									IF iZSensorPositionScan = 0 AND (sPartDataMMI.alrSensorZOffset[1].lrX<>0 OR sPartDataMMI.alrSensorZOffset[1].lrY<>0) THEN
+										iZSensorPositionScan := iZSensorPositionScan + 1;
+										sCurrentState.eStep := SP_RunStp211;
+									ELSE
+										sCurrentState.eStep := SP_RunStp213;
+									END_IF
+								END_IF
+							END_IF
+						SP_RunStp213:
+							IF iZSensorPositionScan = 1 THEN
+								(* We used two position, mean the value *)
+								ZPositionTakeGive := (lrZSensorPosition[0] + lrZSensorPosition[1]) / 2;
+							ELSE
+								(* Only one position, use the first one then *)
+								ZPositionTakeGive := lrZSensorPosition[0];
+							END_IF
+							ZPositionTakeGive := alrRobotPos[LTA_Z,LTP_TableSideALayering1] + alrRobotOffset[LTA_Z, iHead] + (lrCalibrationPartAndHeadHeight - sPartDataMMI.lrPartAndHeadHeight) - ZPositionTakeGive;
+							sCurrentState.eStep := SP_RunStp214;
+						SP_RunStp214: (* Move to take position *)
+							alrSecuredTarget[LA_X] := alrRobotPos[LTA_X,LTP_Lift2] + alrRobotOffset[LTA_X, iHead] + alrLiftCalibrationOffset[LTP_Lift2,LTA_X]  -  sPlateData.alrPartOnPlate[iPlatePos].lrX;
+							alrSecuredTarget[LA_Y] := alrRobotPos[LTA_Y,LTP_Lift2] + alrRobotOffset[LTA_Y, iHead] + alrLiftCalibrationOffset[LTP_Lift2,LTA_Y] - sPlateData.alrPartOnPlate[iPlatePos].lrY;
+							alrTargetPos[LA_THETA] := alrRobotPos[LTA_THETA,LTP_TableSideALayering1] + alrRobotOffset[LTA_THETA, iHead];
+							IF sPlateData.bUseVisionForDrop THEN
+								TComputeVisionPos( THead := sPartDataMMI.THeadOffset, lrAngle := sRunDataVision.TVisionPartData.lrTheta, TOffsetPos => TOffsetPos);
+								alrSecuredTarget[LA_X] := alrSecuredTarget[LA_X] + sRunDataVision.TVisionPartData.lrX - TOffsetPos.lrX;
+								alrSecuredTarget[LA_Y] := alrSecuredTarget[LA_Y] + sRunDataVision.TVisionPartData.lrY + TOffsetPos.lrY;
+								alrTargetPos[LA_THETA] := alrTargetPos[LA_THETA] + TOffsetPos.lrTheta;
+							ELSE
+								alrTargetPos[LA_THETA] := alrTargetPos[LA_THETA] + sPartDataMMI.lrPartOffsetThetaLiftDrop;	// + lrThetaOffsetMecDrop;		// var ajoutée en comparaison avec la vision
+								alrSecuredTarget[LA_X] := alrSecuredTarget[LA_X] + sPartDataMMI.lrPartOffsetXLiftDrop;		// + lrXOffsetMecDrop;					// valueur ajoutée en comparaison avec la vision
+								alrSecuredTarget[LA_Y] := alrSecuredTarget[LA_Y] + sPartDataMMI.lrPartOffsetYLiftDrop;		// + lrYOffsetMecDrop;
+							END_IF
+							aeMoveRobotCommand[LA_THETA] := AC_MoveAtAbsPos;
+							eReturnStep4SecureMove := SP_RunStp215;
+							sCurrentState.eStep := SP_RunStp550;
+						SP_RunStp215:
+							IF eRobotXYTStatus = AS_InPosition THEN
+								sCurrentState.eStep := SP_RunStp1;
+							END_IF
+						SP_RunStp230:
+							alrSecuredTarget[LA_X] := alrRobotPos[LTA_X,LTP_BulkBox] + alrRobotOffset[LTA_X, iHead];
+							alrSecuredTarget[LA_Y] :=alrRobotPos[LTA_Y,LTP_BulkBox] + alrRobotOffset[LTA_Y, iHead];
+							alrTargetPos[LA_THETA] := alrRobotPos[LTA_THETA,LTP_TableSideALayering1] + alrRobotOffset[LTA_THETA, iHead];
+							aeMoveRobotCommand[LA_THETA] := AC_MoveAtAbsPos;
+							eReturnStep4SecureMove := SP_RunStp231;
+							sCurrentState.eStep := SP_RunStp550;
+						SP_RunStp231:
+							IF eRobotXYTStatus = AS_InPosition THEN
+								sCurrentState.eStep := SP_RunStp1;
+							END_IF
+						SP_RunStp250: (* Switch plate *)
+							bPlateEmpty := TRUE;
+							FOR iPlatePos := 0 TO sPlateData.iNbPartOnPlate-1 DO
+								IF aTPartOnPlate[LPP_Lift1,iPlatePos].ePartStatus <> PPS_Absent THEN
+									bPlateEmpty := FALSE;
+									EXIT;
+								END_IF
+							END_FOR
+							IF bPlateEmpty THEN
+								sCurrentState.eStep := SP_RunStp70; (* Call Switch Plate *)
+								eReturnStep := SP_RunStp201;
+							ELSE
+								bDoPlateScan := TRUE;
+								FOR iPlatePos := 0 TO sPlateData.iNbPartOnPlate-1 DO
+									IF aTPartOnPlate[LPP_Lift1,iPlatePos].ePartStatus <> PPS_Undefined AND aTPartOnPlate[LPP_Lift1,iPlatePos].ePartStatus <> PPS_Absent THEN
+										bDoPlateScan := FALSE;
+										EXIT;
+									END_IF
+								END_FOR
+								IF bDoPlateScan THEN
+									sCurrentState.eStep := SP_RunStp251;
+								ELSE
+									(* goto invalid plate *)
+									bLift2NeedsPlate := TRUE;
+									eLift2RunCmd := RCL_MoveToOpenDrawer;
+									sCurrentState.eStep := SP_RunStp201;
+								END_IF
+							END_IF
+						SP_RunStp251: (*Find first undefined pos *)
+							bFoundPlatePos := FALSE;
+							iPlatePos := 0;
+							WHILE (iPlatePos < sPlateData.iNbPartOnPlate) DO
+								IF aTPartOnPlate[LPP_Lift1,iPlatePos].ePartStatus = PPS_Undefined THEN
+									bFoundPlatePos := TRUE;
+									EXIT;
+								ELSE
+									iPlatePos := iPlatePos + 1;
+								END_IF
+							END_WHILE
+							IF NOT bFoundPlatePos THEN
+								(* goto invalid plate *)
+								bLift2NeedsPlate := TRUE;
+								eLift2RunCmd := RCL_MoveToOpenDrawer;
+								sCurrentState.eStep := SP_RunStp201;
+							ELSE
+								sCurrentState.eStep := SP_RunStp252;
+							END_IF
+						SP_RunStp252: (*Scan Vision Part Position *)
+							alrSecuredTarget[LA_X] := alrRobotPos[LTA_X,LTP_Lift1] + alrRobotOffset[LTA_X, LTO_Vision] + alrLiftCalibrationOffset[LTP_Lift1,LTA_X]  - sPlateData.alrPartOnPlate[iPlatePos].lrX ;
+							alrSecuredTarget[LA_Y] :=  alrRobotPos[LTA_Y,LTP_Lift1] + alrRobotOffset[LTA_Y, LTO_Vision] + alrLiftCalibrationOffset[LTP_Lift1,LTA_Y] - sPlateData.alrPartOnPlate[iPlatePos].lrY ;
+							TVisionWaitStab(IN := FALSE);
+							eReturnStep4SecureMove := SP_RunStp253;
+							sCurrentState.eStep := SP_RunStp550;
+						SP_RunStp253:
+							IF eRobotXYTStatus = AS_InPosition THEN
+								TVisionWaitStab(IN := TRUE, PT := TVisionWaitStabTime);
+								IF TVisionWaitStab.Q THEN
+									eVisionRunCmd := RCV_GrabImage;
+									sCurrentState.eStep := SP_RunStp254;
+								END_IF
+							END_IF
+						SP_RunStp254:
+							IF eVisionRunStatus = RS_WaitRequest THEN
+								sRunDataVision.iUseModel := iVisionModelEmpty;
+								eVisionRunCmd := RCV_AnalyseImage;
+								sCurrentState.eStep := SP_RunStp255;
+							END_IF
+						SP_RunStp255: (* Check for part *)
+							IF eVisionRunStatus = RS_WaitRequest THEN
+								IF NOT sRunDataVision.TVisionPartData.bPresent THEN
+									(* Found empty position *)
+									aTPartOnPlate[LPP_Lift1,iPlatePos].ePartStatus := PPS_Absent;
+									iPlatePos := iPlatePos + 1;
+									IF (iPlatePos < sPlateData.iNbPartOnPlate) THEN
+										sCurrentState.eStep := SP_RunStp252;
+									ELSE
+										(* All position on lift1 plate is empty, we can switch plate then *)
+										sCurrentState.eStep := SP_RunStp70; (* Call Switch Plate *)
+										eReturnStep := SP_RunStp201;
+									END_IF
+								ELSE
+									(* goto invalid plate *)
+									bLift2NeedsPlate := TRUE;
+									eLift2RunCmd := RCL_MoveToOpenDrawer;
+									sCurrentState.eStep := SP_RunStp201;
+								END_IF
+							END_IF
+						SP_RunStp270: (*Give to Table *)
+							IF eTableSide = TS_A THEN
+								IF sRunData.iLayringPos = 0 THEN
+									ePos := LTP_TableSideALayering1;
+								ELSE
+									ePos := LTP_TableSideALayering2;
+								END_IF
+							ELSE
+								IF sRunData.iLayringPos = 0 THEN
+									ePos := LTP_TableSideBLayering1;
+								ELSE
+									ePos := LTP_TableSideBLayering2;
+								END_IF
+							END_IF
+							alrSecuredTarget[LA_X] := alrRobotPos[LTA_X,ePos] + alrRobotOffset[LTA_X, iHead];
+							alrSecuredTarget[LA_Y] := alrRobotPos[LTA_Y,ePos] + alrRobotOffset[LTA_Y, iHead];
+							alrTargetPos[LA_THETA] := alrRobotPos[LTA_THETA,ePos] + alrRobotOffset[LTA_THETA, iHead];
+							ZPositionTakeGive := alrRobotPos[LTA_Z,ePos] + alrRobotOffset[LTA_Z, iHead];
+							alrSecuredTarget[LA_X] := alrSecuredTarget[LA_X] - sPartDataMMI.alrPartOffsetLayering[sRunData.iLayringOffsetPos].lrX;
+							alrSecuredTarget[LA_Y] := alrSecuredTarget[LA_Y] + sPartDataMMI.alrPartOffsetLayering[sRunData.iLayringOffsetPos].lrY;
+							ZPositionTakeGive := ZPositionTakeGive + (lrCalibrationLayeringAndPartAndHeadHeight - sPartDataMMI.lrLayeringAndPartAndHeadHeight);
+							aeMoveRobotCommand[LA_THETA] := AC_MoveAtAbsPos;
+							eReturnStep4SecureMove := SP_RunStp271;
+							sCurrentState.eStep := SP_RunStp550;
+						SP_RunStp271:
+							IF eRobotXYTStatus = AS_InPosition THEN
+								sCurrentState.eStep := SP_RunStp1;
+							END_IF
+						SP_RunStp280: (*Get from Turn Over *)
+							alrSecuredTarget[LA_X] := alrRobotPos[LTA_X,LTP_TurnOverArm] + alrRobotOffset[LTA_X, iHead];
+							alrSecuredTarget[LA_Y] :=  alrRobotPos[LTA_Y,LTP_TurnOverArm] + alrRobotOffset[LTA_Y, iHead];
+							alrTargetPos[LA_THETA] := alrRobotPos[LTA_THETA,LTP_TurnOverArm] + alrRobotOffset[LTA_THETA, iHead];
+							ZPositionTakeGive := alrRobotPos[LTA_Z,LTP_TurnOverArm] + alrRobotOffset[LTA_Z, iHead];
+							ZPositionTakeGive := ZPositionTakeGive + (lrCalibrationHeadSusPartHeadSousHeight - sPartDataMMI.lrHeadSusPartHeadSousHeight);
+							aeMoveRobotCommand[LA_THETA] := AC_MoveAtAbsPos;
+							eReturnStep4SecureMove := SP_RunStp281;
+							sCurrentState.eStep := SP_RunStp550;
+						SP_RunStp281:
+							IF eRobotXYTStatus = AS_InPosition THEN
+								sCurrentState.eStep := SP_RunStp1;
+							END_IF
+						SP_RunStp301: (* Check Reject Status*)
+							IF eRejectRunStatus = RS_WaitRequest THEN
+								CASE sRejectRunData.eRejectStatus OF
+									RS_Ready:
+										eRejectRunCmd := RCR_LockDrawer;
+									RS_Locked:
+										IF sRunData.eModule = LMP_Sample THEN
+											iPlatePos := sPlateData.iNbPartOnPlate - 1;
+										ELSE
+											iPlatePos := 0;
+										END_IF
+										sCurrentState.eStep := SP_RunStp302;
+										IF sPartDataMMI.bDropInBox THEN
+											sCurrentState.eStep := SP_RunStp330;
+										END_IF
+									ELSE
+										bRejectNeedsPlate := TRUE;
+										eRejectRunCmd := RCR_OpenDrawer;
+								END_CASE
+							END_IF
+						SP_RunStp302: (*Check part status*)
+							bFoundPlatePos := FALSE;
+							IF sRunData.eModule = LMP_Sample THEN
+								WHILE (iPlatePos >= 0) DO
+									IF aTPartOnPlate[LPP_Reject,iPlatePos].ePartStatus = PPS_Absent OR aTPartOnPlate[LPP_Reject,iPlatePos].ePartStatus = PPS_Undefined THEN
+										bFoundPlatePos := TRUE;
+										EXIT;
+									ELSE
+										iPlatePos := iPlatePos - 1;
+									END_IF
+								END_WHILE
+							ELSE
+								WHILE (iPlatePos < sPlateData.iNbPartOnPlate) DO
+									IF aTPartOnPlate[LPP_Reject,iPlatePos].ePartStatus = PPS_Absent OR aTPartOnPlate[LPP_Reject,iPlatePos].ePartStatus = PPS_Undefined THEN
+										bFoundPlatePos := TRUE;
+										EXIT;
+									ELSE
+										iPlatePos := iPlatePos + 1;
+									END_IF
+								END_WHILE
+							END_IF
+							IF NOT bFoundPlatePos THEN
+								(* Request new plate *)
+								bRejectNeedsPlate := TRUE;
+								eRejectRunCmd := RCR_OpenDrawer;
+								sCurrentState.eStep := SP_RunStp301;
+							ELSE
+								IF bDisableVision OR NOT sPlateData.bUseVisionForDrop THEN
+									sCurrentState.eStep := SP_RunStp310;
+								ELSE
+									sCurrentState.eStep := SP_RunStp303;
+								END_IF
+							END_IF
+						SP_RunStp303: (*Scan Vision Part Position *)
+							alrSecuredTarget[LA_X] := alrRobotPos[LTA_X,LTP_Reject] + alrRobotOffset[LTA_X, LTO_Vision] + alrLiftCalibrationOffset[LTP_Reject,LTA_X]  - sPlateData.alrPartOnPlate[iPlatePos].lrX ;
+							alrSecuredTarget[LA_Y] :=  alrRobotPos[LTA_Y,LTP_Reject] + alrRobotOffset[LTA_Y, LTO_Vision] + alrLiftCalibrationOffset[LTP_Reject,LTA_Y] - sPlateData.alrPartOnPlate[iPlatePos].lrY ;
+							iVisionScanModel := 0;
+							TVisionWaitStab(IN := FALSE);
+							eReturnStep4SecureMove := SP_RunStp304;
+							sCurrentState.eStep := SP_RunStp550;
+						SP_RunStp304:
+							IF eRobotXYTStatus = AS_InPosition THEN
+								TVisionWaitStab(IN := TRUE, PT := TVisionWaitStabTime);
+								IF TVisionWaitStab.Q THEN
+									eVisionRunCmd := RCV_GrabImage;
+									sCurrentState.eStep := SP_RunStp305;
+								END_IF
+							END_IF
+						SP_RunStp305: (* Move to pre-drop position *)
+							IF eVisionRunStatus = RS_WaitRequest THEN
+								IF bUse103171OptimB5PreMoveXY THEN
+									alrSecuredTarget[LA_X] := alrRobotPos[LTA_X,LTP_Reject] + alrRobotOffset[LTA_X, iHead] + alrLiftCalibrationOffset[LTP_Reject,LTA_X]  -  sPlateData.alrPartOnPlate[iPlatePos].lrX;
+									alrSecuredTarget[LA_Y] :=alrRobotPos[LTA_Y,LTP_Reject] + alrRobotOffset[LTA_Y, iHead] + alrLiftCalibrationOffset[LTP_Reject,LTA_Y] - sPlateData.alrPartOnPlate[iPlatePos].lrY;
+									alrTargetPos[LA_THETA] := alrRobotPos[LTA_THETA,LTP_TableSideALayering1] + alrRobotOffset[LTA_THETA, iHead];
+									aeMoveRobotCommand[LA_THETA] := AC_MoveAtAbsPos;
+									eReturnStep4SecureMove := SP_RunStp307;
+									sCurrentState.eStep := SP_RunStp550;
+								ELSE
+									sCurrentState.eStep := SP_RunStp307;
+								END_IF
+								sRunDataVision.iUseModel := iVisionModelEmpty;
+								eVisionRunCmd := RCV_AnalyseImage;
+							END_IF
+						SP_RunStp307: (* Check for part *)
+							IF eVisionRunStatus = RS_WaitRequest THEN
+								IF NOT sRunDataVision.TVisionPartData.bPresent THEN
+									(* Found empty position *)
+									aTPartOnPlate[LPP_Reject,iPlatePos].ePartStatus := PPS_Absent;
+									sCurrentState.eStep := SP_RunStp308;
+								ELSE
+									(* found something *)
+									aTPartOnPlate[LPP_Reject,iPlatePos].ePartStatus := PPS_Present;
+									IF sRunData.eModule = LMP_Sample THEN
+										iPlatePos := iPlatePos - 1;
+									ELSE
+										iPlatePos := iPlatePos + 1;
+									END_IF
+									sCurrentState.eStep := SP_RunStp302;
+								END_IF
+							END_IF
+						SP_RunStp308: (*Scan Vision for position *)
+							IF sPlateData.bUseVisionForDrop THEN
+								sRunDataVision.iUseModel := aiVisionModelPlate[iVisionScanModel];
+								eVisionRunCmd := RCV_AnalyseImage;
+								sCurrentState.eStep := SP_RunStp309;
+							ELSE
+								sCurrentState.eStep := SP_RunStp310;
+							END_IF
+						SP_RunStp309: (* Get position *)
+							IF eVisionRunStatus = RS_WaitRequest THEN
+								IF (*sRunDataVision.TVisionPartData.bPresent AND*) sRunDataVision.TVisionPartData.bValid THEN
+									(* Found valide position *)
+									sCurrentState.eStep := SP_RunStp310;
+								(*ELSIF sRunDataVision.TVisionPartData.bPresent AND NOT sRunDataVision.TVisionPartData.bValid THEN
+									(* Found invalide part, relaunch with other model ??? not implemented right now*)
+									aTPartOnPlate[LPP_Reject,iPlatePos].ePartStatus := PPS_BadPart;
+									IF sRunData.eModule = LMP_Sample THEN
+										iPlatePos := iPlatePos - 1;
+									ELSE
+										iPlatePos := iPlatePos + 1;
+									END_IF
+									sCurrentState.eStep := SP_RunStp302;*)
+								ELSIF iVisionScanModel < iMaxScanVisionModelPlate THEN
+									(* relaunch scan with next step model *)
+									iVisionScanModel := iVisionScanModel + 1;
+									sCurrentState.eStep := SP_RunStp308;
+								ELSE
+									(* Plate cannot be recognize, skip to next one *)
+									aTPartOnPlate[LPP_Reject,iPlatePos].ePartStatus := PPS_BadPart;
+									IF sRunData.eModule = LMP_Sample THEN
+										iPlatePos := iPlatePos - 1;
+									ELSE
+										iPlatePos := iPlatePos + 1;
+									END_IF
+									sCurrentState.eStep := SP_RunStp302;
+								END_IF
+							END_IF
+						SP_RunStp310: (* Found valid position, Get Z position *)
+							IF bUse103171OptimB3 THEN
+								IF (alrZLiftPos[LTP_Reject] = 0) THEN
+									eScanPos := LTP_Reject;
+									eReturnStepMeasureZLift := SP_RunStp310;
+									sCurrentState.eStep := SP_RunStp500;
+								ELSE
+									ZPositionTakeGive := alrRobotPos[LTA_Z,LTP_TableSideALayering1] + alrRobotOffset[LTA_Z, iHead] + (lrCalibrationPartAndHeadHeight - sPartDataMMI.lrPartAndHeadHeight) - alrZLiftPos[LTP_Reject];
+									sCurrentState.eStep := SP_RunStp314;
+								END_IF
+							ELSE
+								iZSensorPositionScan := 0;
+								sCurrentState.eStep := SP_RunStp311;
+							END_IF
+						SP_RunStp311:
+							alrSecuredTarget[LA_X] := alrRobotPos[LTA_X,LTP_Reject] + alrRobotOffset[LTA_X, LTO_ZSensor] + alrLiftCalibrationOffset[LTP_Reject,LTA_X]  -  sPlateData.alrPartOnPlate[iPlatePos].lrX - sPartDataMMI.alrSensorZOffset[iZSensorPositionScan].lrX;
+							alrSecuredTarget[LA_Y] :=alrRobotPos[LTA_Y,LTP_Reject] + alrRobotOffset[LTA_Y, LTO_ZSensor] + alrLiftCalibrationOffset[LTP_Reject,LTA_Y] - sPlateData.alrPartOnPlate[iPlatePos].lrY - sPartDataMMI.alrSensorZOffset[iZSensorPositionScan].lrY;
+							TSensorZWaitStab(IN := FALSE);
+							eReturnStep4SecureMove := SP_RunStp312;
+							sCurrentState.eStep := SP_RunStp550;
+						SP_RunStp312:
+							IF eRobotXYTStatus = AS_InPosition THEN
+								TSensorZWaitStab(IN := TRUE, PT := TSensorZWaitStabTime);
+								IF TSensorZWaitStab.Q THEN
+									IF TSensorMeasure.bInputOutOfRange THEN
+										bZSensorOutOfRangeError := TRUE;
+									END_IF
+									lrZSensorPosition[iZSensorPositionScan] := TSensorMeasure.lrValue;
+									IF iZSensorPositionScan = 0 AND (sPartDataMMI.alrSensorZOffset[1].lrX<>0 OR sPartDataMMI.alrSensorZOffset[1].lrY<>0) THEN
+										iZSensorPositionScan := iZSensorPositionScan + 1;
+										sCurrentState.eStep := SP_RunStp311;
+									ELSE
+										sCurrentState.eStep := SP_RunStp313;
+									END_IF
+								END_IF
+							END_IF
+						SP_RunStp313:
+							IF iZSensorPositionScan = 1 THEN
+								(* We used two position, mean the value *)
+								ZPositionTakeGive := (lrZSensorPosition[0] + lrZSensorPosition[1]) / 2;
+							ELSE
+								(* Only one position, use the first one then *)
+								ZPositionTakeGive := lrZSensorPosition[0];
+							END_IF
+							ZPositionTakeGive := alrRobotPos[LTA_Z,LTP_TableSideALayering1] + alrRobotOffset[LTA_Z, iHead] + (lrCalibrationPartAndHeadHeight - sPartDataMMI.lrPartAndHeadHeight) - ZPositionTakeGive;
+							sCurrentState.eStep := SP_RunStp314;
+						SP_RunStp314: (* Move to take position *)
+							alrSecuredTarget[LA_X] := alrRobotPos[LTA_X,LTP_Reject] + alrRobotOffset[LTA_X, iHead] + alrLiftCalibrationOffset[LTP_Reject,LTA_X]  -  sPlateData.alrPartOnPlate[iPlatePos].lrX;
+							alrSecuredTarget[LA_Y] :=alrRobotPos[LTA_Y,LTP_Reject] + alrRobotOffset[LTA_Y, iHead] + alrLiftCalibrationOffset[LTP_Reject,LTA_Y] - sPlateData.alrPartOnPlate[iPlatePos].lrY;
+							alrTargetPos[LA_THETA] := alrRobotPos[LTA_THETA,LTP_TableSideALayering1] + alrRobotOffset[LTA_THETA, iHead];
+							IF sPlateData.bUseVisionForDrop THEN
+								TComputeVisionPos( THead := sPartDataMMI.THeadOffset, lrAngle := sRunDataVision.TVisionPartData.lrTheta, TOffsetPos => TOffsetPos);
+								alrSecuredTarget[LA_X] := alrSecuredTarget[LA_X] + sRunDataVision.TVisionPartData.lrX - TOffsetPos.lrX;
+								alrSecuredTarget[LA_Y] := alrSecuredTarget[LA_Y] + sRunDataVision.TVisionPartData.lrY + TOffsetPos.lrY;
+								alrTargetPos[LA_THETA] := alrTargetPos[LA_THETA] + TOffsetPos.lrTheta;
+							ELSE
+								alrTargetPos[LA_THETA] := alrTargetPos[LA_THETA] + sPartDataMMI.lrPartOffsetThetaLiftDrop;
+								alrSecuredTarget[LA_X] := alrSecuredTarget[LA_X] + sPartDataMMI.lrPartOffsetXLiftDrop;
+								alrSecuredTarget[LA_Y] := alrSecuredTarget[LA_Y] + sPartDataMMI.lrPartOffsetYLiftDrop;
+							END_IF
+							aeMoveRobotCommand[LA_THETA] := AC_MoveAtAbsPos;
+							eReturnStep4SecureMove := SP_RunStp315;
+							sCurrentState.eStep := SP_RunStp550;
+						SP_RunStp315:
+							IF eRobotXYTStatus = AS_InPosition THEN
+								sCurrentState.eStep := SP_RunStp1;
+							END_IF
+
+						SP_RunStp330: (*Go to box position*)
+							alrSecuredTarget[LA_X] := alrRobotPos[LTA_X,LTP_RejectBulkBox] + alrRobotOffset[LTA_X, iHead];
+							alrSecuredTarget[LA_Y] :=alrRobotPos[LTA_Y,LTP_RejectBulkBox] + alrRobotOffset[LTA_Y, iHead];
+							alrTargetPos[LA_THETA] := alrRobotPos[LTA_THETA,LTP_TableSideALayering1] + alrRobotOffset[LTA_THETA, iHead];
+							aeMoveRobotCommand[LA_THETA] := AC_MoveAtAbsPos;
+							eReturnStep4SecureMove := SP_RunStp331;
+							sCurrentState.eStep := SP_RunStp550;
+						SP_RunStp331:
+							IF eRobotXYTStatus = AS_InPosition THEN
+								sCurrentState.eStep := SP_RunStp1;
+							END_IF
+
+						SP_RunStp400 : (*move XYZ to safe *)
+							IF (eLift1RunStatus = RS_WaitRequest OR sLift1RunData.eLiftPos = LP_OpenDrawer) AND (eLift2RunStatus = RS_WaitRequest OR sLift2RunData.eLiftPos = LP_OpenDrawer) THEN
+								IF eLift1RunStatus = RS_WaitRequest THEN eLift1RunCmd := RCL_MoveToOpenDrawer; END_IF
+								IF eLift2RunStatus = RS_WaitRequest THEN eLift2RunCmd := RCL_MoveToOpenDrawer; END_IF
+								bMovePlateTakerDown := FALSE;
+								sCurrentState.eStep := SP_RunStp401;
+							END_IF
+						SP_RunStp401 :
+							IF (bPlateTakerIsUp) THEN
+								(* Move Z to Safe *)
+								alrTargetPos[LA_Z1] := alrSecuredSafeZPos[0] (*alrSafePos[LA_Z1]*);
+								alrTargetPos[LA_Z2] := alrSecuredSafeZPos[1] (*alrSafePos[LA_Z2]*);
+								aeMoveRobotCommand[LA_Z1] := AC_MoveAtAbsPos;
+								aeMoveRobotCommand[LA_Z2] := AC_MoveAtAbsPos;
+								sCurrentState.eStep := SP_RunStp402;
+							END_IF
+						SP_RunStp402:
+							(* Wait until we are up *)
+							IF ((aTRobotAxis[LA_Z1].eCurrentState = AS_InPosition) OR
+									(bUse103171OptimB5MoveOnPreSafeZ AND  (aTRobotAxis[LA_Z1].lrCurrentPos < (alrSecuredSafeZPos[0]+lrPreSafeTolerance)))) AND
+									((aTRobotAxis[LA_Z2].eCurrentState = AS_InPosition) OR
+									(bUse103171OptimB5MoveOnPreSafeZ AND  (aTRobotAxis[LA_Z2].lrCurrentPos < (alrSecuredSafeZPos[1]+lrPreSafeTolerance)))) THEN
+								(* Move X/ Y to Safe *)
+								alrSecuredTarget[LA_X] := alrSafePos[LA_X];
+								alrSecuredTarget[LA_Y] := alrSafePos[LA_Y];
+								eReturnStep4SecureMove := SP_RunStp403;
+								sCurrentState.eStep := SP_RunStp550;
+							END_IF
+						SP_RunStp403:
+							IF aTRobotAxis[LA_X].eCurrentState =  AS_InPosition AND aTRobotAxis[LA_Y].eCurrentState =  AS_InPosition AND sLift1RunData.eLiftPos = LP_OpenDrawer AND sLift2RunData.eLiftPos = LP_OpenDrawer THEN
+								sCurrentState.eStep := SP_RunStp1;
+							END_IF
+						SP_RunStp410 : (*Scan plate*)
+							FOR i := 0 TO C_MAX_NB_OF_PARTS_ON_PLATE DO
+								aTScanResult[i].bPresent := FALSE;
+								aTScanResult[i].bValid := FALSE;
+								aTScanResult[i].lrScore := -1;
+								aTScanResult[i].lrTheta := 0;
+								aTScanResult[i].lrX := 0;
+								aTScanResult[i].lrY := 0;
+							END_FOR
+							sRunData.iCurrentScanOK := 0;
+							sRunData.iCurrentScanTotal := 0;
+							CASE sRunData.eModule OF
+								LMP_Lift1:
+									eScanPos := LTP_Lift1;
+									sCurrentState.eStep := SP_RunStp411;
+								LMP_Lift2:
+									eScanPos := LTP_Lift2;
+									sCurrentState.eStep := SP_RunStp412;
+								LMP_Reject:
+									eScanPos := LTP_Reject;
+									sCurrentState.eStep := SP_RunStp413;
+							END_CASE
+						SP_RunStp411: (* Check Lift Status*)
+							IF eLift1RunStatus = RS_WaitRequest THEN
+								CASE sLift1RunData.eLiftPos OF
+									LP_OnPlate:
+										iPlatePos := 0;
+										sCurrentState.eStep := SP_RunStp415;
+									LP_Full,LP_Empty:
+										bLift1NeedsPlate := TRUE;
+										eLift1RunCmd := RCL_MoveToOpenDrawer;
+									ELSE
+										eLift1RunCmd := RCL_MoveToPlate;
+								END_CASE
+							END_IF
+						SP_RunStp412: (* Check Lift Status*)
+							IF eLift2RunStatus = RS_WaitRequest THEN
+								CASE sLift2RunData.eLiftPos OF
+									LP_OnPlate:
+										iPlatePos := 0;
+										sCurrentState.eStep := SP_RunStp415;
+									LP_Full,LP_Empty:
+										bLift2NeedsPlate := TRUE;
+										eLift2RunCmd := RCL_MoveToOpenDrawer;
+									ELSE
+										eLift2RunCmd := RCL_MoveToPlate;
+								END_CASE
+							END_IF
+						SP_RunStp413: (* Check Reject Status*)
+							IF eRejectRunStatus = RS_WaitRequest THEN
+								CASE sRejectRunData.eRejectStatus OF
+									RS_Ready:
+										eRejectRunCmd := RCR_LockDrawer;
+									RS_Locked:
+										iPlatePos := 0;
+										sCurrentState.eStep := SP_RunStp415;
+									ELSE
+										bRejectNeedsPlate := TRUE;
+										eRejectRunCmd := RCR_OpenDrawer;
+								END_CASE
+							END_IF
+						SP_RunStp415: (*Scan Vision Part Position *)
+							alrSecuredTarget[LA_X] := alrRobotPos[LTA_X,eScanPos] + alrRobotOffset[LTA_X, LTO_Vision] + alrLiftCalibrationOffset[eScanPos,LTA_X]  - sPlateData.alrPartOnPlate[iPlatePos].lrX ;
+							alrSecuredTarget[LA_Y] :=  alrRobotPos[LTA_Y,eScanPos] + alrRobotOffset[LTA_Y, LTO_Vision] + alrLiftCalibrationOffset[eScanPos,LTA_Y] - sPlateData.alrPartOnPlate[iPlatePos].lrY ;
+							TVisionWaitStab(IN := FALSE);
+							eReturnStep4SecureMove := SP_RunStp416;
+							sCurrentState.eStep := SP_RunStp550;
+						SP_RunStp416:
+							IF eRobotXYTStatus = AS_InPosition THEN
+								TVisionWaitStab(IN := TRUE, PT := TVisionWaitStabTime);
+								IF TVisionWaitStab.Q THEN
+									eVisionRunCmd := RCV_GrabImage;
+									sCurrentState.eStep := SP_RunStp417;
+								END_IF
+							END_IF
+						SP_RunStp417:
+							IF eVisionRunStatus = RS_WaitRequest THEN
+								sRunDataVision.iUseModel := sRunData.iScanModel;
+								eVisionRunCmd := RCV_AnalyseImage;
+								sCurrentState.eStep := SP_RunStp419;
+							END_IF
+						SP_RunStp419: (* Check for part *)
+							IF eVisionRunStatus = RS_WaitRequest THEN
+								aTScanResult[iPlatePos] := sRunDataVision.TVisionPartData;
+								iPlatePos := iPlatePos + 1;
+								IF sRunDataVision.TVisionPartData.bValid THEN
+									sRunData.iCurrentScanOK := sRunData.iCurrentScanOK + 1;
+								END_IF
+								sRunData.iCurrentScanTotal := sRunData.iCurrentScanTotal + 1;
+								IF (iPlatePos < sPlateData.iNbPartOnPlate) THEN
+									sCurrentState.eStep := SP_RunStp415;
+								ELSE
+									sCurrentState.eStep := SP_RunStp420;
+								END_IF
+							END_IF
+						SP_RunStp420: (* Unlock Reject if needed *)
+							IF sRunData.eModule = LMP_Reject AND eRejectRunStatus = RS_WaitRequest AND sRejectRunData.eRejectStatus=RS_Locked THEN
+								eRejectRunCmd := RCR_UnlockDrawer;
+							END_IF
+							sCurrentState.eStep := SP_RunStp1;
+						SP_RunStp500: (* Measure Z position on lift *)
+							iZSensorPositionScan := 0;
+							lrPartX := sPlateData.alrPartOnPlate[0].lrX;
+							lrPartY := sPlateData.alrPartOnPlate[0].lrY;
+							sCurrentState.eStep := SP_RunStp501;
+						SP_RunStp501:
+							alrSecuredTarget[LA_X] := alrRobotPos[LTA_X,eScanPos] + alrRobotOffset[LTA_X, LTO_ZSensor] + alrLiftCalibrationOffset[eScanPos,LTA_X]  -  lrPartX - sPartDataMMI.alrSensorZOffset[iZSensorPositionScan].lrX;
+							alrSecuredTarget[LA_Y] :=alrRobotPos[LTA_Y,eScanPos] + alrRobotOffset[LTA_Y, LTO_ZSensor] + alrLiftCalibrationOffset[eScanPos,LTA_Y] - lrPartY - sPartDataMMI.alrSensorZOffset[iZSensorPositionScan].lrY;
+							TSensorZWaitStab(IN := FALSE);
+							sCurrentState.bWaitStep := TRUE;
+							eReturnStep4SecureMove := SP_RunStp502;
+							sCurrentState.eStep := SP_RunStp550;
+						SP_RunStp502:
+							IF eRobotXYTStatus = AS_InPosition THEN
+								TSensorZWaitStab(IN := TRUE, PT := TSensorZWaitStabTime);
+								IF TSensorZWaitStab.Q THEN
+									IF TSensorMeasure.bInputOutOfRange THEN
+										bZSensorOutOfRangeError := TRUE;
+									END_IF
+									lrZSensorPosition[iZSensorPositionScan] := TSensorMeasure.lrValue;
+									IF iZSensorPositionScan = 0 AND (sPartDataMMI.alrSensorZOffset[1].lrX<>0 OR sPartDataMMI.alrSensorZOffset[1].lrY<>0) THEN
+										iZSensorPositionScan := iZSensorPositionScan + 1;
+										lrPartX := sPlateData.alrPartOnPlate[sPlateData.iNbPartOnPlate-1].lrX;
+										lrPartY := sPlateData.alrPartOnPlate[sPlateData.iNbPartOnPlate-1].lrY;
+										sCurrentState.eStep := SP_RunStp501;
+									ELSE
+										sCurrentState.eStep := SP_RunStp503;
+									END_IF
+								END_IF
+							END_IF
+						SP_RunStp503:
+							IF iZSensorPositionScan = 1 THEN
+								(* We used two position, mean the value *)
+								alrZLiftPos[eScanPos] := (lrZSensorPosition[0] + lrZSensorPosition[1]) / 2;
+							ELSE
+								(* Only one position, use the first one then *)
+								alrZLiftPos[eScanPos] := lrZSensorPosition[0];
+							END_IF
+							sCurrentState.eStep := eReturnStepMeasureZLift;
+						SP_RunStp550:	// Move XY without entering unsecured area
+							// Check if we enter area on Y
+							IF (alrSecuredTarget[LA_Y] > alrUnsecuredArea[0,LA_Y]) AND (aTRobotAxis[LA_Y].lrCurrentPos < (alrUnsecuredArea[0,LA_Y] - lrSafeTolerance)) THEN
+								// We have to go around area coming from neg
+								iSecuredIndexFirst := 0;
+								iSecuredIndexSecond := 1;
+								sCurrentState.eStep := SP_RunStp555;
+							ELSIF (alrSecuredTarget[LA_Y] < alrUnsecuredArea[1,LA_Y]) AND (aTRobotAxis[LA_Y].lrCurrentPos > (alrUnsecuredArea[1,LA_Y] + lrSafeTolerance )) THEN
+								// We have to go around area coming from pos
+								iSecuredIndexFirst := 1;
+								iSecuredIndexSecond := 0;
+								sCurrentState.eStep := SP_RunStp555;
+							ELSE
+								alrTargetPos[LA_X] := alrSecuredTarget[LA_X];
+								alrTargetPos[LA_Y] := alrSecuredTarget[LA_Y];
+								aeMoveRobotCommand[LA_X] := AC_MoveAtAbsPos;
+								aeMoveRobotCommand[LA_Y] := AC_MoveAtAbsPos;
+								sCurrentState.eStep := SP_RunStp599;
+							END_IF
+						SP_RunStp555:	// Go around area
+							IF alrTargetPos[LA_Z1] <> alrSecuredSafeZPos[0] THEN
+								alrTargetPos[LA_Z1] := alrSecuredSafeZPos[0];
+								aeMoveRobotCommand[LA_Z1] := AC_MoveAtAbsPos;
+							END_IF
+							IF alrTargetPos[LA_Z2] <> alrSecuredSafeZPos[1] THEN
+								alrTargetPos[LA_Z2] := alrSecuredSafeZPos[1];
+								aeMoveRobotCommand[LA_Z2] := AC_MoveAtAbsPos;
+							END_IF
+							IF (alrSecuredTarget[LA_X] < alrUnsecuredArea[1,LA_X]) THEN // HFO
+							//IF ((alrSecuredTarget[LA_X] - alrUnsecuredArea[1,LA_X]) * ((alrUnsecuredArea[1,LA_X] + lrSafeTolerance) - aTRobotAxis[LA_X].lrCurrentPos)) < 0 THEN
+								alrTargetPos[LA_X] := alrUnsecuredArea[1,LA_X] + lrSafeTolerance;
+								toto := FALSE;
+							ELSE
+								alrTargetPos[LA_X] := alrSecuredTarget[LA_X];
+								toto := TRUE;
+							END_IF
+							alrTargetPos[LA_Y] := alrUnsecuredArea[iSecuredIndexFirst,LA_Y] + iSecuredIndexFirst * lrSafeTolerance - iSecuredIndexSecond * lrSafeTolerance;
+							aeMoveRobotCommand[LA_X] := AC_MoveAtAbsPos;
+							aeMoveRobotCommand[LA_Y] := AC_MoveAtAbsPos;
+							sCurrentState.eStep := SP_RunStp556;
+						SP_RunStp556:	
+//							IF eRobotXYTStatus = AS_InPosition THEN
+							IF (aTRobotAxis[LA_Z1].eCurrentState = AS_InPosition)
+								AND (aTRobotAxis[LA_Z2].eCurrentState = AS_InPosition)
+								AND ABS(alrTargetPos[LA_X] - aTRobotAxis[LA_X].lrCurrentPos) < 1 THEN
+								alrTargetPos[LA_Y] := alrUnsecuredArea[iSecuredIndexSecond,LA_Y] + iSecuredIndexSecond * lrSafeTolerance - iSecuredIndexFirst * lrSafeTolerance;
+								aeMoveRobotCommand[LA_Y] := AC_MoveAtAbsPos;
+								sCurrentState.eStep := SP_RunStp557;
+							END_IF
+						SP_RunStp557:	
+//							IF eRobotXYTStatus = AS_InPosition THEN
+							IF 	ABS(alrTargetPos[LA_Y] - aTRobotAxis[LA_Y].lrCurrentPos) < 5
+								AND ABS(alrTargetPos[LA_X] - aTRobotAxis[LA_X].lrCurrentPos) < 5 THEN
+								alrTargetPos[LA_X] := alrSecuredTarget[LA_X];
+								alrTargetPos[LA_Y] := alrSecuredTarget[LA_Y];
+								aeMoveRobotCommand[LA_X] := AC_MoveAtAbsPos;
+								aeMoveRobotCommand[LA_Y] := AC_MoveAtAbsPos;
+								sCurrentState.eStep := SP_RunStp599;
+							END_IF
+						SP_RunStp599:	
+							IF eRobotXYTStatus = AS_InPosition THEN
+								// return back to process
+								sCurrentState.eStep := eReturnStep4SecureMove;
+							END_IF
+					END_CASE
+				END_IF
+			MS_Manual :	// Manual Mode to move axis indepedentely
+				TManualCmd.eTableSide := eTableSide;	// Position of the table : A, B or Moving
+				// Control of safe position of Z_1 and Z_2
+				TManualCmd.bAxisZSafe[0] := (aTRobotAxis[LA_Z1].lrCurrentPos < (alrSafePos[LA_Z1]+lrSafeTolerance)) AND ((aTRobotAxis[LA_Z1].eCurrentState = AS_InPosition) OR (aTRobotAxis[LA_Z1].eCurrentState = AS_PowerOff)) AND (aTRobotAxis[LA_Z1].bAxisHomed);
+				TManualCmd.bAxisZSafe[1] := (aTRobotAxis[LA_Z2].lrCurrentPos < (alrSafePos[LA_Z2]+lrSafeTolerance)) AND ((aTRobotAxis[LA_Z2].eCurrentState = AS_InPosition) OR (aTRobotAxis[LA_Z1].eCurrentState = AS_PowerOff)) AND (aTRobotAxis[LA_Z1].bAxisHomed);;
+				
+				iRobotPosition := UINT_TO_INT(TManualCmd.wRobotPos AND 15);
+				iRobotOffset := UINT_TO_INT(SHR(TManualCmd.wRobotPos AND 2#1111_1111_1111_0000(*NOT 15*),4));
+
+				bManualZIsSafe :=  (aTRobotAxis[LA_Z1].lrCurrentPos < (alrSafePos[LA_Z1]+lrSafeTolerance)) AND (aTRobotAxis[LA_Z2].lrCurrentPos < (alrSafePos[LA_Z2]+lrSafeTolerance))
+								(*AND ((aTRobotAxis[LA_Z1].eCurrentState = AS_InPosition) OR (aTRobotAxis[LA_Z1].eCurrentState = AS_PowerOff))
+								AND ((aTRobotAxis[LA_Z2].eCurrentState = AS_InPosition)  OR (aTRobotAxis[LA_Z2].eCurrentState = AS_PowerOff))*)
+								AND (aTRobotAxis[LA_Z1].bAxisHomed) AND (aTRobotAxis[LA_Z2].bAxisHomed) AND bPlateTakerIsUp;
+
+				TManualCmd.TMovePlateTakerDown.Enable := ((aTRobotAxis[LA_X].eCurrentState = AS_InPosition) AND (aTRobotAxis[LA_Y].eCurrentState = AS_InPosition) AND bManualZIsSafe) OR NOT bPlateTakerIsUp ;
+				TManualCmd.TSafe.Enable := TRUE;
+				TManualCmd.TVisionCalibration.Enable := TRUE;
+				FOR iAxis := 0 TO 4 DO
+					iTeachedAxis := GetLoaderTeachedAxisFromAxis(iAxis);
+					TManualCmd.TVisionCalibration.Enable := NOT bManInterlock AND TManualCmd.TVisionCalibration.Enable AND aTRobotAxis[iAxis].eCurrentState = AS_InPosition;
+					TManualCmd.TSafe.Enable := TManualCmd.TSafe.Enable AND ((aTRobotAxis[iAxis].eCurrentState = AS_InPosition) OR  (aTRobotAxis[iAxis].eCurrentState = AS_PowerOff) OR  (aTRobotAxis[iAxis].eCurrentState = AS_OnLimitNeg)  OR  (aTRobotAxis[iAxis].eCurrentState = AS_NotHomed));
+					TManualCmd.aTAxis[iAxis].Home.Enable := NOT (bManInterlock AND (NOT INT_TO_UINT(iAxis) = 2 OR NOT INT_TO_UINT(iAxis) = 3 OR NOT INT_TO_UINT(iAxis) = 4)) AND ((aTRobotAxis[iAxis].eCurrentState = AS_InPosition) OR (aTRobotAxis[iAxis].eCurrentState = AS_NotHomed) OR (aTRobotAxis[iAxis].eCurrentState = AS_OnLimitNeg)) AND iManMoveAxis=iManMoveAxisNone
+															AND NOT((INT_TO_UINT(iAxis) > 1) AND (aTRobotAxis[LA_X].lrCurrentPos > alrUnsecuredArea[0,LA_X]+ lrSafeTolerance) AND (aTRobotAxis[LA_X].lrCurrentPos < alrUnsecuredArea[1,LA_X] - lrSafeTolerance) AND (aTRobotAxis[LA_Y].lrCurrentPos > alrUnsecuredArea[0,LA_Y]+ lrSafeTolerance) AND (aTRobotAxis[LA_Y].lrCurrentPos < alrUnsecuredArea[1,LA_Y] - lrSafeTolerance));
+					//TManualCmd.aTAxis[iAxis].Home.Enable := NOT (bManInterlock AND iAxis > 1) AND ((aTRobotAxis[iAxis].eCurrentState = AS_InPosition) OR (aTRobotAxis[iAxis].eCurrentState = AS_NotHomed) OR (aTRobotAxis[iAxis].eCurrentState = AS_OnLimitNeg)) AND iManMoveAxis=iManMoveAxisNone;
+
+					(*TManualCmd.aTAxis[iAxis].Home.Enable := ((aTRobotAxis[iAxis].eCurrentState = AS_InPosition) OR (aTRobotAxis[iAxis].eCurrentState = AS_NotHomed) OR (aTRobotAxis[iAxis].eCurrentState = AS_OnLimitNeg)) AND iManMoveAxis=iManMoveAxisNone;
+					IF iAxis < 3 THEN
+						TManualCmd.aTAxis[iAxis].Home.Enable := TManualCmd.aTAxis[iAxis].Home.Enable AND NOT bManInterlock;
+					END_IF*)
+
+					TManualCmd.aTAxis[iAxis].MoveBw.Enable := NOT bManInterlock AND iManMoveAxis=iManMoveAxisNone AND (aTRobotAxis[iAxis].eCurrentState = AS_InPosition) AND ((aTRobotAxis[iAxis].lrCurrentPos - alrJogStep[iAxis] >= aTRobotAxis[iAxis].lrMinPos) OR NOT aTRobotAxis[iAxis].bMinPosMonitoring);
+					TManualCmd.aTAxis[iAxis].MoveFw.Enable := NOT bManInterlock AND iManMoveAxis=iManMoveAxisNone AND (aTRobotAxis[iAxis].eCurrentState = AS_InPosition) AND ((aTRobotAxis[iAxis].lrCurrentPos + alrJogStep[iAxis] <= aTRobotAxis[iAxis].lrMaxPos) OR NOT aTRobotAxis[iAxis].bMaxPosMonitoring);
+
+
+					TManualCmd.aTAxisPos[iAxis].TeachedPos := alrRobotPos[iTeachedAxis, iRobotPosition] + alrRobotOffset[iTeachedAxis,iRobotOffset];
+					IF (iRobotOffset = LTO_Plate) AND (iRobotPosition = LTP_Lift1) THEN
+						TManualCmd.aTAxisPos[LA_X].TeachedPos := alrRobotPos[LTA_X,LTP_Lift1] +alrRobotOffset[LTA_X, LTO_Plate] + alrLiftCalibrationOffset[LTP_Lift1,LTA_X] - sPlateData.alrTakePlatePos.lrX;
+						TManualCmd.aTAxisPos[LA_Y].TeachedPos := alrRobotPos[LTA_Y,LTP_Lift1] +alrRobotOffset[LTA_Y, LTO_Plate] + alrLiftCalibrationOffset[LTP_Lift1,LTA_Y] - sPlateData.alrTakePlatePos.lrY;
+					END_IF
+					TManualCmd.aTAxisPos[iAxis].MoveToTeach.Enable := NOT bManInterlock AND iManMoveAxis=iManMoveAxisNone AND (aTRobotAxis[iAxis].eCurrentState = AS_InPosition) AND
+							(( TManualCmd.aTAxisPos[iAxis].TeachedPos >= aTRobotAxis[iAxis].lrMinPos) OR NOT aTRobotAxis[iAxis].bMinPosMonitoring) AND
+							((TManualCmd.aTAxisPos[iAxis].TeachedPos <= aTRobotAxis[iAxis].lrMaxPos) OR NOT aTRobotAxis[iAxis].bMaxPosMonitoring);
+					TManualCmd.aTAxis[iAxis].CurrentPos := aTRobotAxis[iAxis].lrCurrentPos;
+					alrRobotSpeed[iAxis] := aTRobotAxis[iAxis].lrManualSpeed;
+				END_FOR
+				TManualCmd.TMoveVision2Table.Enable := bManualZIsSafe;
+				TManualCmd.TMoveVision2Lift.Enable := bManualZIsSafe;
+				IF NOT bManualZIsSafe THEN
+					TManualCmd.aTAxis[LA_X].Home.Enable := FALSE;
+					TManualCmd.aTAxis[LA_Y].Home.Enable := FALSE;
+					IF alrJogStep[LA_X] > lrMaxXYMoveAllowed-0.1 THEN
+						TManualCmd.aTAxis[LA_X].MoveBw.Enable := FALSE;
+						TManualCmd.aTAxis[LA_X].MoveFw.Enable := FALSE;
+					END_IF
+					IF alrJogStep[LA_Y] > lrMaxXYMoveAllowed-0.1 THEN
+						TManualCmd.aTAxis[LA_Y].MoveBw.Enable := FALSE;
+						TManualCmd.aTAxis[LA_Y].MoveFw.Enable := FALSE;
+					END_IF
+					IF alrJogStep[LA_Z1] > lrMaxXYMoveAllowed-0.1 THEN
+						TManualCmd.aTAxis[LA_Z1].MoveFw.Enable := FALSE;
+					END_IF
+					IF alrJogStep[LA_Z2] > lrMaxXYMoveAllowed-0.1 THEN
+						TManualCmd.aTAxis[LA_Z2].MoveFw.Enable := FALSE;
+					END_IF
+					TManualCmd.aTAxisPos[LA_X].MoveToTeach.Enable := TManualCmd.aTAxisPos[LA_X].MoveToTeach.Enable AND ABS(TManualCmd.aTAxisPos[LA_X].TeachedPos-aTRobotAxis[LA_X].lrCurrentPos) < lrMaxXYMoveAllowed-0.1;
+					TManualCmd.aTAxisPos[LA_Y].MoveToTeach.Enable := TManualCmd.aTAxisPos[LA_Y].MoveToTeach.Enable AND ABS(TManualCmd.aTAxisPos[LA_Y].TeachedPos-aTRobotAxis[LA_Y].lrCurrentPos) < lrMaxXYMoveAllowed-0.1;
+				END_IF
+				FOR i:= 0 TO 1 DO
+					TManualCmd.alrVaccumValue[i] := aTHeadVacuum[i].lrVacuum;
+				END_FOR
+				
+				TManualCmd.lrSensorMeasure := TSensorMeasure.lrValue;
+				TManualCmd.TZSensorTeach.Enable := (eTableSide = TS_A) AND NOT TSensorMeasure.bInputOutOfRange;
+
+				bManInterlockLiftOut := NOT bManualZIsSafe;
+				bManInterlockOut := NOT ((aTRobotAxis[LA_Z1].lrCurrentPos < (alrSafePos[LA_Z1]+lrSafeTolerance)) AND (aTRobotAxis[LA_Z2].lrCurrentPos < (alrSafePos[LA_Z2]+lrSafeTolerance)) AND
+								 (*(aTRobotAxis[LA_X].lrCurrentPos < (alrSafePos[LA_X]+lrSafeTolerance)) AND (aTRobotAxis[LA_Y].lrCurrentPos < (alrSafePos[LA_Y]+lrSafeTolerance)) AND*)
+								(*AND ((aTRobotAxis[LA_Z1].eCurrentState = AS_InPosition) OR (aTRobotAxis[LA_Z1].eCurrentState = AS_PowerOff))
+								AND ((aTRobotAxis[LA_Z2].eCurrentState = AS_InPosition)  OR (aTRobotAxis[LA_Z2].eCurrentState = AS_PowerOff))*)
+								(*(aTRobotAxis[LA_X].bAxisHomed) AND (aTRobotAxis[LA_Y].bAxisHomed) AND*)
+								(aTRobotAxis[LA_Z1].bAxisHomed) AND (aTRobotAxis[LA_Z2].bAxisHomed) AND bPlateTakerIsUp);
+				CASE sCurrentState.eStep OF
+					SP_ManualStp0 :
+						TManualCmd.TPlateVacuum.Enable := TRUE;
+						TManualCmd.THead1Vacuum.Enable := TRUE;
+						TManualCmd.THead2Vacuum.Enable := TRUE;
+						TManualCmd.TPlateVacuum.Activate := bEnablePlateVacuum;
+						TManualCmd.TMovePlateTakerDown.Activate := bMovePlateTakerDown;
+						TManualCmd.THead1Vacuum.Activate := abEnableHeadVacuum[0];
+						TManualCmd.THead2Vacuum.Activate := abEnableHeadVacuum[1];
+						FOR iAxis := 0 TO 4 DO
+							TManualCmd.aTAxis[iAxis].Home.Activate := FALSE;
+							TManualCmd.aTAxis[iAxis].MoveFw.Activate := FALSE;
+							TManualCmd.aTAxis[iAxis].MoveBw.Activate := FALSE;
+							TManualCmd.aTAxisPos[iAxis].MoveToTeach.Activate := FALSE;
+							TManualCmd.aTAxisPos[iAxis].Teach := FALSE;
+							TManualCmd.aTAxisPos[iAxis].MoveToTeach.Enable := FALSE;
+							TManualCmd.aTAxis[iAxis].JogStep := alrJogStep[iAxis];
+						END_FOR
+						FOR i:= 0 TO 1 DO
+							TManualCmd.alrVaccumThershold[i] := alrVacuumThreshold[i];
+						END_FOR
+						TManualCmd.TVisionCalibration.Activate := FALSE;
+						TManualCmd.TSafe.Activate := FALSE;
+						TManualCmd.TZSensorTeach.Activate := FALSE;
+						 iManMoveAxis:=iManMoveAxisNone;
+						TManualCmd.TAspirationBrush.Enable := TRUE;
+						TManualCmd.TAspirationBrush.Activate := bAspirationBrushOn;
+						TManualCmd.lrSensorAdjust := lrSensorAdjust;
+						TManualCmd.TMoveVision2Table.Activate := FALSE;
+						TManualCmd.TMoveVision2Lift.Activate := FALSE;
+						sCurrentState.eStep := SP_ManualStp1;
+					SP_ManualStp1 :
+						IF bStopReq THEN
+							sCurrentState.eStatus := MS_Stopped;
+						ELSE
+							FOR iAxis := 0 TO 4 DO
+								iTeachedAxis := GetLoaderTeachedAxisFromAxis(iAxis);
+								IF TManualCmd.aTAxisPos[iAxis].Teach THEN
+									TManualCmd.aTAxisPos[iAxis].Teach := FALSE; (* change here the learning teach *)
+									IF (iRobotOffset = LTO_Z1) THEN
+										alrRobotOffset[iTeachedAxis,iRobotOffset] := 0;
+										alrRobotPos[iTeachedAxis, iRobotPosition] := aTRobotAxis[iAxis].lrCurrentPos;
+										iTeachedModeDebug := 0;
+									ELSIF (iRobotOffset <> LTO_Plate) THEN (* Plate position are hardcoded, cannot be teached *)
+										alrRobotOffset[iTeachedAxis, iRobotOffset] := aTRobotAxis[iAxis].lrCurrentPos - alrRobotPos[iTeachedAxis, iRobotPosition];
+										iTeachedModeDebug := 1;
+									END_IF
+								END_IF
+								IF (alrJogStep[iAxis] <> TManualCmd.aTAxis[iAxis].JogStep) THEN
+									alrJogStep[iAxis] := TManualCmd.aTAxis[iAxis].JogStep;
+								END_IF
+								IF TManualCmd.aTAxisPos[iAxis].MoveToTeach.Activate AND iManMoveAxis=iManMoveAxisNone THEN
+									alrTargetPos[iAxis] := TManualCmd.aTAxisPos[iAxis].TeachedPos;
+									iManMoveAxis := iAxis;
+									sCurrentState.eStep := SP_ManualStp10;
+								END_IF
+								IF TManualCmd.aTAxis[iAxis].MoveFw.Activate AND iManMoveAxis=iManMoveAxisNone THEN
+									alrTargetPos[iAxis] := aTRobotAxis[iAxis].lrCurrentPos + alrJogStep[iAxis];
+									iManMoveAxis := iAxis;
+									sCurrentState.eStep := SP_ManualStp10;
+								END_IF
+								IF TManualCmd.aTAxis[iAxis].MoveBw.Activate AND iManMoveAxis=iManMoveAxisNone THEN
+									alrTargetPos[iAxis] := aTRobotAxis[iAxis].lrCurrentPos - alrJogStep[iAxis];
+									iManMoveAxis := iAxis;
+									sCurrentState.eStep := SP_ManualStp10;
+								END_IF
+								IF TManualCmd.aTAxis[iAxis].Home.Activate AND  iManMoveAxis=iManMoveAxisNone THEN
+									iManMoveAxis := iAxis;
+									sCurrentState.eStep := SP_ManualStp20;
+								END_IF
+							END_FOR
+							FOR i:= 0 TO 1 DO
+								IF TManualCmd.alrVaccumThershold[i] <> alrVacuumThreshold[i] THEN
+									alrVacuumThreshold[i] := TManualCmd.alrVaccumThershold[i];
+								END_IF
+							END_FOR
+							IF TManualCmd.TSafe.Activate AND  iManMoveAxis=iManMoveAxisNone THEN
+								TManualCmd.TSafe.Activate := FALSE;
+								iManMoveAxis:=LA_X;
+								sCurrentState.eStep := SP_ManualStp30;
+							END_IF
+							IF TManualCmd.TVisionCalibration.Activate AND  iManMoveAxis=iManMoveAxisNone THEN
+								TManualCmd.TVisionCalibration.Activate := FALSE;
+								iManMoveAxis:=LA_X;
+								sCurrentState.eStep := SP_ManualStp50;
+							END_IF
+							IF (lrSensorAdjust <> TManualCmd.lrSensorAdjust) THEN
+								lrSensorAdjust :=  TManualCmd.lrSensorAdjust;
+							END_IF
+							IF TManualCmd.TZSensorTeach.Activate THEN
+								TManualCmd.TZSensorTeach.Activate := FALSE;
+								lrSensorAdjust := 0 - (TSensorMeasure.lrValue - lrSensorAdjust);
+								TManualCmd.lrSensorAdjust := lrSensorAdjust;
+							END_IF
+							IF TManualCmd.TMoveVision2Table.Activate  AND  iManMoveAxis=iManMoveAxisNone THEN
+								TManualCmd.TMoveVision2Table.Activate := FALSE;
+								iManMoveAxis:=LA_X;
+								alrTargetPos[LA_X] := alrRobotPos[LTA_X,LTP_TableSideALayering1]  -  sPartDataMMI.alrPartOffsetLayering[sRunData.iLayringOffsetPos].lrX + alrRobotOffset[LTA_X, LTO_Vision];
+								alrTargetPos[LA_Y] :=  alrRobotPos[LTA_Y,LTP_TableSideALayering1]  + sPartDataMMI.alrPartOffsetLayering[sRunData.iLayringOffsetPos].lrY + alrRobotOffset[LTA_Y, LTO_Vision];
+								sCurrentState.eStep := SP_ManualStp70;
+							END_IF
+							IF TManualCmd.TMoveVision2Lift.Activate  AND  iManMoveAxis=iManMoveAxisNone THEN
+								TManualCmd.TMoveVision2Lift.Activate := FALSE;
+								iManMoveAxis:=LA_X;
+								alrTargetPos[LA_X] := alrRobotPos[LTA_X,LTP_Lift1] + alrRobotOffset[LTA_X, LTO_Vision] + alrLiftCalibrationOffset[LTP_Lift1,LTA_X]  - sPlateData.alrPartOnPlate[TManualCmd.wMoveVision2LiftPos-1].lrX ;
+								alrTargetPos[LA_Y] :=  alrRobotPos[LTA_Y,LTP_Lift1] + alrRobotOffset[LTA_Y, LTO_Vision] + alrLiftCalibrationOffset[LTP_Lift1,LTA_Y] - sPlateData.alrPartOnPlate[TManualCmd.wMoveVision2LiftPos-1].lrY ;
+								sCurrentState.eStep := SP_ManualStp70;
+							END_IF
+						END_IF
+					SP_ManualStp10: (* Do the movement *)
+						aeMoveRobotCommand[iManMoveAxis] := AC_MoveAtAbsPos;
+						sCurrentState.eStep := SP_ManualStp11;
+					SP_ManualStp11: (* Wait until position is reached *)
+						CASE aTRobotAxis[iManMoveAxis].eCurrentState OF
+							AS_InPosition, AS_InError:
+								FOR iAxis := 0 TO 4 DO
+									TManualCmd.aTAxis[iAxis].Home.Activate := FALSE;
+									TManualCmd.aTAxis[iAxis].MoveFw.Activate := FALSE;
+									TManualCmd.aTAxis[iAxis].MoveBw.Activate := FALSE;
+									TManualCmd.aTAxisPos[iAxis].MoveToTeach.Activate := FALSE;
+								END_FOR
+								 iManMoveAxis:=iManMoveAxisNone;
+								sCurrentState.eStep := SP_ManualStp1;
+						END_CASE
+					SP_ManualStp20 : (* Init axis *)
+						aeMoveRobotCommand[iManMoveAxis] := AC_Home;
+						sCurrentState.eStep := SP_ManualStp21;
+					SP_ManualStp21 : (* Rotate the turn over to go to index position *)
+						CASE aTRobotAxis[iManMoveAxis].eCurrentState OF
+							AS_InPosition, AS_InError:
+								FOR iAxis := 0 TO 4 DO
+									TManualCmd.aTAxis[iAxis].Home.Activate := FALSE;
+									TManualCmd.aTAxis[iAxis].MoveFw.Activate := FALSE;
+									TManualCmd.aTAxis[iAxis].MoveBw.Activate := FALSE;
+								END_FOR
+								 iManMoveAxis:=iManMoveAxisNone;
+								sCurrentState.eStep := SP_ManualStp1;
+						END_CASE
+					SP_ManualStp30: (* Move taker up *)
+						TManualCmd.TMovePlateTakerDown.Activate := FALSE;
+						IF bPlateTakerIsUp THEN
+							sCurrentState.eStep := SP_ManualStp31;
+						ELSIF bJackError THEN
+							iManMoveAxis:=iManMoveAxisNone;
+							sCurrentState.eStep := SP_ManualStp1;
+						END_IF
+					SP_ManualStp31: (*Move  Z1 and Z2 to Limit*)
+						aeMoveRobotCommand[LA_Z1] := AC_MoveLimitNeg;
+						aeMoveRobotCommand[LA_Z2] := AC_MoveLimitNeg;
+						sCurrentState.eStep := SP_ManualStp32;
+					SP_ManualStp32:
+						IF aTRobotAxis[LA_Z1].eCurrentState= AS_OnLimitNeg AND aTRobotAxis[LA_Z2].eCurrentState= AS_OnLimitNeg THEN
+							sCurrentState.eStep := SP_ManualStp33;
+						ELSIF (aTRobotAxis[LA_Z1].eCurrentState= AS_OnLimitNeg AND aTRobotAxis[LA_Z2].eCurrentState = AS_InError) OR
+							    (aTRobotAxis[LA_Z1].eCurrentState= AS_InError AND aTRobotAxis[LA_Z2].eCurrentState = AS_OnLimitNeg) OR
+							    (aTRobotAxis[LA_Z1].eCurrentState= AS_InError AND aTRobotAxis[LA_Z2].eCurrentState = AS_InError) THEN
+							iManMoveAxis:=iManMoveAxisNone;
+							sCurrentState.eStep := SP_ManualStp1;
+						END_IF
+					SP_ManualStp33: (* Init X/Y  *)
+						aeMoveRobotCommand[LA_X] := AC_Init;
+						aeMoveRobotCommand[LA_Y] := AC_Init;
+						sCurrentState.eStep := SP_ManualStp34;
+					SP_ManualStp34:
+						IF aTRobotAxis[LA_X].eCurrentState= AS_InPosition AND aTRobotAxis[LA_Y].eCurrentState = AS_InPosition THEN
+							sCurrentState.eStep := SP_ManualStp35;
+						ELSIF (aTRobotAxis[LA_X].eCurrentState= AS_InPosition AND aTRobotAxis[LA_Y].eCurrentState = AS_InError) OR
+							    (aTRobotAxis[LA_X].eCurrentState= AS_InError AND aTRobotAxis[LA_Y].eCurrentState = AS_InPosition) OR
+							    (aTRobotAxis[LA_X].eCurrentState= AS_InError AND aTRobotAxis[LA_Y].eCurrentState = AS_InError) THEN
+							iManMoveAxis:=iManMoveAxisNone;
+							sCurrentState.eStep := SP_ManualStp1;
+						END_IF
+					SP_ManualStp35: (* Move X/Y *)
+						aeMoveRobotCommand[LA_X] := AC_MoveAtAbsPos;
+						aeMoveRobotCommand[LA_Y] := AC_MoveAtAbsPos;
+						alrTargetPos[LA_X] := alrSafePos[LA_X];
+						alrTargetPos[LA_Y] := alrSafePos[LA_Y];
+						sCurrentState.eStep := SP_ManualStp36;
+					SP_ManualStp36:
+						IF aTRobotAxis[LA_X].eCurrentState= AS_InPosition AND aTRobotAxis[LA_Y].eCurrentState = AS_InPosition THEN
+							sCurrentState.eStep := SP_ManualStp37;
+						ELSIF (aTRobotAxis[LA_X].eCurrentState= AS_InPosition AND aTRobotAxis[LA_Y].eCurrentState = AS_InError) OR
+							    (aTRobotAxis[LA_X].eCurrentState= AS_InError AND aTRobotAxis[LA_Y].eCurrentState = AS_InPosition) OR
+							    (aTRobotAxis[LA_X].eCurrentState= AS_InError AND aTRobotAxis[LA_Y].eCurrentState = AS_InError) THEN
+							iManMoveAxis:=iManMoveAxisNone;
+							sCurrentState.eStep := SP_ManualStp1;
+						END_IF
+					SP_ManualStp37: (* Init Z1 and Z2*)
+						aeMoveRobotCommand[LA_Z1] := AC_Init;
+						aeMoveRobotCommand[LA_Z2] := AC_Init;
+						sCurrentState.eStep := SP_ManualStp38;
+					SP_ManualStp38:
+						IF aTRobotAxis[LA_Z1].eCurrentState= AS_InPosition AND aTRobotAxis[LA_Z2].eCurrentState = AS_InPosition THEN
+							sCurrentState.eStep := SP_ManualStp39;
+						ELSIF (aTRobotAxis[LA_Z1].eCurrentState= AS_InPosition AND aTRobotAxis[LA_Z2].eCurrentState = AS_InError) OR
+							    (aTRobotAxis[LA_Z1].eCurrentState= AS_InError AND aTRobotAxis[LA_Z2].eCurrentState = AS_InPosition) OR
+							    (aTRobotAxis[LA_Z1].eCurrentState= AS_InError AND aTRobotAxis[LA_Z2].eCurrentState = AS_InError) THEN
+							iManMoveAxis:=iManMoveAxisNone;
+							sCurrentState.eStep := SP_ManualStp1;
+						END_IF
+					SP_ManualStp39: (* Move up Z1 and Z2 *)
+						aeMoveRobotCommand[LA_Z1] := AC_MoveAtAbsPos;
+						aeMoveRobotCommand[LA_Z2] := AC_MoveAtAbsPos;
+						alrTargetPos[LA_Z1] := alrSafePos[LA_Z1];
+						alrTargetPos[LA_Z2] := alrSafePos[LA_Z2];
+						sCurrentState.eStep := SP_ManualStp40;
+					SP_ManualStp40:
+						IF (aTRobotAxis[LA_Z1].eCurrentState= AS_InPosition OR aTRobotAxis[LA_Z1].eCurrentState = AS_InError) AND
+							    (aTRobotAxis[LA_Z2].eCurrentState= AS_InPosition OR aTRobotAxis[LA_Z2].eCurrentState = AS_InError) THEN
+							iManMoveAxis:=iManMoveAxisNone;
+							sCurrentState.eStep := SP_ManualStp1;
+						END_IF
+					SP_ManualStp50: (*Switch part for learning vision *)
+						iHead := 0;
+						alrTargetPos[LA_X] := alrRobotPos[LTA_X,LTP_TableSideALayering1] + alrRobotOffset[LTA_X, iHead];
+						alrTargetPos[LA_Y] :=  alrRobotPos[LTA_Y,LTP_TableSideALayering1] + alrRobotOffset[LTA_Y, iHead];
+						alrTargetPos[LA_THETA] := alrRobotPos[LTA_THETA,LTP_TableSideALayering1] + alrRobotOffset[LTA_THETA, iHead];
+						ZPositionTakeGive := alrRobotPos[LTA_Z,LTP_TableSideALayering1] + alrRobotOffset[LTA_Z, iHead];
+						alrTargetPos[LA_X] := alrTargetPos[LA_X]   -  sPartDataMMI.alrPartOffsetLayering[0].lrX;
+						alrTargetPos[LA_Y] := alrTargetPos[LA_Y]  + sPartDataMMI.alrPartOffsetLayering[0].lrY;
+						ZPositionTakeGive := ZPositionTakeGive + (lrCalibrationLayeringAndPartAndHeadHeight - sPartDataMMI.lrLayeringAndPartAndHeadHeight);
+						aeMoveRobotCommand[LA_X] := AC_MoveAtAbsPos;
+						aeMoveRobotCommand[LA_Y] := AC_MoveAtAbsPos;
+						aeMoveRobotCommand[LA_THETA] := AC_MoveAtAbsPos;
+						sCurrentState.eStep := SP_ManualStp51;
+					SP_ManualStp51:
+						IF eRobotXYTStatus = AS_InPosition THEN
+							sCurrentState.eStep := SP_ManualStp52;
+						END_IF
+					SP_ManualStp52 :  (*Take Part*)
+						ZPosition := ZPositionTakeGive + sPartDataMMI.lrPartOffsetZLayeringTake;
+						alrTargetPos[LA_Z1+iHead] := ZPosition;
+						aeMoveRobotCommand[LA_Z1+iHead] := AC_MoveAtAbsPos;
+						sCurrentState.eStep := SP_ManualStp53;
+					SP_ManualStp53 :  (*Movement done*)
+						IF aTRobotAxis[LA_Z1+iHead].lrRemainingTimeToGo < 1 AND aTRobotAxis[LA_Z1+iHead].lrRemainingTimeToGo <> 0 THEN
+							 TManualCmd.THead1Vacuum.Activate := TRUE;
+						END_IF
+						IF aTRobotAxis[LA_Z1+iHead].eCurrentState = AS_InPosition THEN
+							 TManualCmd.THead1Vacuum.Activate := TRUE;
+							sCurrentState.eStep := SP_ManualStp54;
+						END_IF
+					SP_ManualStp54 :
+						(* Check if the part is on head *)
+						IF aTHeadVacuum[iHead].bVacuumCorrect THEN
+							alrTargetPos[LA_Z1+iHead] := alrSafePos[LA_Z1+iHead];
+							aeMoveRobotCommand[LA_Z1+iHead] := AC_MoveAtAbsPos;
+							sCurrentState.eStep := SP_ManualStp55;
+						END_IF
+					SP_ManualStp55 :  (*Movement done*)
+						IF aTRobotAxis[LA_Z1+iHead].eCurrentState = AS_InPosition THEN
+							iPlatePos := 0;
+							iZSensorPositionScan := 0;
+							sCurrentState.eStep := SP_ManualStp56;
+						END_IF
+					SP_ManualStp56:
+						alrTargetPos[LA_X] := alrRobotPos[LTA_X,LTP_Lift2] + alrRobotOffset[LTA_X, LTO_ZSensor] + alrLiftCalibrationOffset[LTP_Lift2,LTA_X]  -  sPlateData.alrPartOnPlate[iPlatePos].lrX - sPartDataMMI.alrSensorZOffset[iZSensorPositionScan].lrX;
+						alrTargetPos[LA_Y] :=alrRobotPos[LTA_Y,LTP_Lift2] + alrRobotOffset[LTA_Y, LTO_ZSensor] + alrLiftCalibrationOffset[LTP_Lift2,LTA_Y] - sPlateData.alrPartOnPlate[iPlatePos].lrY - sPartDataMMI.alrSensorZOffset[iZSensorPositionScan].lrY;
+						aeMoveRobotCommand[LA_X] := AC_MoveAtAbsPos;
+						aeMoveRobotCommand[LA_Y] := AC_MoveAtAbsPos;
+						TSensorZWaitStab(IN := FALSE);
+						sCurrentState.eStep := SP_ManualStp57;
+					SP_ManualStp57:
+						IF eRobotXYTStatus = AS_InPosition THEN
+							TSensorZWaitStab(IN := TRUE, PT := TSensorZWaitStabTime);
+							IF TSensorZWaitStab.Q THEN
+								IF TSensorMeasure.bInputOutOfRange THEN
+									iManMoveAxis:=iManMoveAxisNone;
+									sCurrentState.eStep := SP_ManualStp1;
+									bZSensorOutOfRangeError := TRUE;
+								END_IF
+								lrZSensorPosition[iZSensorPositionScan] := TSensorMeasure.lrValue;
+								IF iZSensorPositionScan = 0 AND (sPartDataMMI.alrSensorZOffset[1].lrX<>0 OR sPartDataMMI.alrSensorZOffset[1].lrY<>0) THEN
+									iZSensorPositionScan := iZSensorPositionScan + 1;
+									sCurrentState.eStep := SP_ManualStp56;
+								ELSE
+									sCurrentState.eStep := SP_ManualStp58;
+								END_IF
+							END_IF
+						END_IF
+					SP_ManualStp58: (* Move to take position *)
+						IF iZSensorPositionScan = 1 THEN
+							(* We used two position, mean the value *)
+							ZPositionTakeGive := (lrZSensorPosition[0] + lrZSensorPosition[1]) / 2;
+						ELSE
+							(* Only one position, use the first one then *)
+							ZPositionTakeGive := lrZSensorPosition[0];
+						END_IF
+						ZPositionTakeGive := alrRobotPos[LTA_Z,LTP_TableSideALayering1] + alrRobotOffset[LTA_Z, iHead] + (lrCalibrationPartAndHeadHeight - sPartDataMMI.lrPartAndHeadHeight) - ZPositionTakeGive;
+						alrTargetPos[LA_X] := alrRobotPos[LTA_X,LTP_Lift2] + alrRobotOffset[LTA_X, iHead] + alrLiftCalibrationOffset[LTP_Lift2,LTA_X]  -  sPlateData.alrPartOnPlate[iPlatePos].lrX;
+						alrTargetPos[LA_Y] :=alrRobotPos[LTA_Y,LTP_Lift2] + alrRobotOffset[LTA_Y, iHead] + alrLiftCalibrationOffset[LTP_Lift2,LTA_Y] - sPlateData.alrPartOnPlate[iPlatePos].lrY;
+						alrTargetPos[LA_THETA] := alrRobotPos[LTA_THETA,LTP_TableSideALayering1] + alrRobotOffset[LTA_THETA, iHead];
+						aeMoveRobotCommand[LA_THETA] := AC_MoveAtAbsPos;
+						aeMoveRobotCommand[LA_X] := AC_MoveAtAbsPos;
+						aeMoveRobotCommand[LA_Y] := AC_MoveAtAbsPos;
+						sCurrentState.eStep := SP_ManualStp59;
+					SP_ManualStp59:
+						IF eRobotXYTStatus = AS_InPosition THEN
+							ZPosition := ZPositionTakeGive + sPartDataMMI.lrPartOffsetZLiftDrop;
+							sCurrentState.eStep := SP_ManualStp60;
+						END_IF
+					SP_ManualStp60 : (*Give Part*)
+						alrTargetPos[LA_Z1+iHead] := ZPosition + 1;
+						aeMoveRobotCommand[LA_Z1+iHead] := AC_MoveAtAbsPos;
+						sCurrentState.eStep := SP_ManualStp61;
+					SP_ManualStp61 :  (*Movement done*)
+						IF aTRobotAxis[LA_Z1+iHead].eCurrentState = AS_InPosition THEN
+							 TManualCmd.THead1Vacuum.Activate := FALSE;
+							sCurrentState.eStep := SP_ManualStp62;
+						END_IF
+					SP_ManualStp62:
+						(* Check if laying vacuum is disabled *)
+						IF aTHeadVacuum[iHead].bVacuumCorrect THEN
+							alrTargetPos[LA_Z1+iHead] := alrSafePos[LA_Z1+iHead];
+							aeMoveRobotCommand[LA_Z1+iHead] := AC_MoveAtAbsPos;
+							sCurrentState.eStep := SP_ManualStp63;
+						END_IF
+					SP_ManualStp63 :
+						IF aTRobotAxis[LA_Z1+iHead].eCurrentState = AS_InPosition THEN
+							alrTargetPos[LA_X] := alrRobotPos[LTA_X,LTP_Lift2] + alrRobotOffset[LTA_X, LTO_Vision] + alrLiftCalibrationOffset[LTP_Lift2,LTA_X]  - sPlateData.alrPartOnPlate[iPlatePos].lrX ;
+							alrTargetPos[LA_Y] :=  alrRobotPos[LTA_Y,LTP_Lift2] + alrRobotOffset[LTA_Y, LTO_Vision] + alrLiftCalibrationOffset[LTP_Lift2,LTA_Y] - sPlateData.alrPartOnPlate[iPlatePos].lrY ;
+							aeMoveRobotCommand[LA_X] := AC_MoveAtAbsPos;
+							aeMoveRobotCommand[LA_Y] := AC_MoveAtAbsPos;
+							sCurrentState.eStep := SP_ManualStp64;
+						END_IF
+					SP_ManualStp64:
+						IF eRobotXYTStatus = AS_InPosition THEN
+							iManMoveAxis:=iManMoveAxisNone;
+							sCurrentState.eStep := SP_ManualStp1;
+						END_IF
+					SP_ManualStp70: (* Move X/Y *)
+						aeMoveRobotCommand[LA_X] := AC_MoveAtAbsPos;
+						aeMoveRobotCommand[LA_Y] := AC_MoveAtAbsPos;
+						sCurrentState.eStep := SP_ManualStp71;
+					SP_ManualStp71:
+						IF aTRobotAxis[LA_X].eCurrentState= AS_InPosition AND aTRobotAxis[LA_Y].eCurrentState = AS_InPosition THEN
+							iManMoveAxis:=iManMoveAxisNone;
+							sCurrentState.eStep := SP_ManualStp1;
+						END_IF
+				END_CASE
+				abEnableHeadVacuum[0] := TManualCmd.THead1Vacuum.Activate;
+				abEnableHeadVacuum[1] := TManualCmd.THead2Vacuum.Activate;
+				bMovePlateTakerDown := TManualCmd.TMovePlateTakerDown.Activate;
+				bEnablePlateVacuum := TManualCmd.TPlateVacuum.Activate;
+				TManualCmd.lrSensorAdjust := lrSensorAdjust;
+				bAspirationBrushOn := TManualCmd.TAspirationBrush.Activate;
+			MS_Paused:
+				IF bStopReq THEN
+					sCurrentState.eStatus := MS_Ready;
+				END_IF
+		END_CASE;
+	MC_Init :
+		sCurrentState.eStep := SP_InitStp1;
+		sCurrentState.eStatus := MS_Init;
+	MC_Run :
+		sCurrentState.eStatus := MS_Running;
+	MC_Manual :
+		sCurrentState.bInitDone := FALSE;
+		sCurrentState.eStatus := MS_Manual;
+		sCurrentState.eStep := SP_ManualStp0;
+	MC_Stop :
+		sCurrentState.eStatus := MS_Stopped;
+END_CASE;
+
+IF bResetErrors THEN
+	sCurrentState.bInError := FALSE;
+	bZSensorOutOfRangeError := FALSE;
+END_IF
+
+IF bNewJob THEN
+	IF C_PROD_MODE_GOOD_PART THEN
+		IF sProdLot.dGoodQty > 0 THEN
+			sProdLot.dEstimatedPartTime := TIME_TO_DWORD(TJobElapsed)  / sProdLot.dGoodQty;
+		ELSE
+			sProdLot.dEstimatedPartTime := 0;
+		END_IF
+	ELSE
+		IF sProdLot.dProdQty > 0 THEN
+			sProdLot.dEstimatedPartTime := TIME_TO_DWORD(TJobElapsed)  / sProdLot.dProdQty;
+		ELSE
+			sProdLot.dEstimatedPartTime := 0;
+		END_IF
+	END_IF
+	sProdLot.dLoadedQty := sProdLot.dProdQty;
+END_IF
+
+IF bNewJob THEN
+(*IF bNewJob OR sCurrentState.eStatus = MS_Manual THEN*)
+	abResetPlateState[LPP_Lift1] := TRUE;
+	abResetPlateState[LPP_Lift2] := TRUE;
+	abResetPlateState[LPP_Reject] := TRUE;
+END_IF
+IF bNewPlateLift1 THEN abResetPlateState[LPP_Lift1] := TRUE; END_IF
+IF bNewPlateLift2 THEN abResetPlateState[LPP_Lift2] := TRUE; END_IF
+IF bNewPlateReject THEN abResetPlateState[LPP_Reject] := TRUE; END_IF
+
+IF abCopySwitchFromPlate THEN
+	abCopySwitchFromPlate := FALSE;
+	FOR j := 0 TO sPlateData.iNbPartOnPlate DO
+		aTPartOnSwitchPlate[j].ePartStatus := aTPartOnPlate[LPP_Lift1, j].ePartStatus;
+	END_FOR
+END_IF
+
+FOR i :=LPP_Reject  TO LPP_Lift2 DO
+	IF abResetPlateState[i] THEN
+		abResetPlateState[i] := FALSE;
+		FOR j := 0 TO sPlateData.iNbPartOnPlate DO
+			aTPartOnPlate[i, j ].ePartStatus := PPS_Undefined;
+		END_FOR
+	END_IF
+END_FOR
+
+IF abCopySwitchToPlate THEN
+	abCopySwitchToPlate := FALSE;
+	FOR j := 0 TO sPlateData.iNbPartOnPlate DO
+		aTPartOnPlate[LPP_Lift2, j].ePartStatus := aTPartOnSwitchPlate[j].ePartStatus;
+	END_FOR
+END_IF
+(* ----------------------------------------------------------- MOVE SECURITY CHECK -------------------------------------------------------------------------*)
+
+(* Check if a consequent move more then 2 mm with heads down or plate taker down is requested *)
+IF ((ABS(aTRobotAxis[LA_X].lrCurrentPos - alrTargetPos[LA_X]) > lrMaxXYMoveAllowed) AND (aeMoveRobotCommand[LA_X] <> AC_None)) OR
+		((ABS(aTRobotAxis[LA_Y].lrCurrentPos - alrTargetPos[LA_Y]) > lrMaxXYMoveAllowed) AND (aeMoveRobotCommand[LA_Y] <> AC_None)) THEN
+	IF (aTRobotAxis[LA_Z1].lrCurrentPos > (alrSecuredSafeZPos[0] + lrSafeTolerance))
+			OR (aTRobotAxis[LA_Z2].lrCurrentPos > (alrSecuredSafeZPos[1] + lrSafeTolerance))
+			OR NOT bPlateTakerIsUp THEN
+		IF sCurrentState.eStep <> SP_RunStp63 THEN (* Do not check during cleaning *)
+			aeMoveRobotCommand[LA_X] := AC_ForceStop;
+			aeMoveRobotCommand[LA_Y] := AC_ForceStop;
+			aeMoveRobotCommand[LA_Z1] := AC_ForceStop;
+			aeMoveRobotCommand[LA_Z2] := AC_ForceStop;
+			sCurrentState.bInitDone := FALSE;
+			bConflictDetected := TRUE;
+		END_IF
+	END_IF
+ELSIF ((aTRobotAxis[LA_X].lrCurrentPos > alrUnsecuredArea[0,LA_X]+ lrSafeTolerance) AND (aTRobotAxis[LA_X].lrCurrentPos < alrUnsecuredArea[1,LA_X] - lrSafeTolerance)		(* The Restritcted aera is lrSafeTolerance smaller for the axis have some space to work *)
+		AND (aTRobotAxis[LA_Y].lrCurrentPos > alrUnsecuredArea[0,LA_Y]+ lrSafeTolerance) AND (aTRobotAxis[LA_Y].lrCurrentPos < alrUnsecuredArea[1,LA_Y] - lrSafeTolerance)
+		AND ((aTRobotAxis[LA_Z1].lrCurrentPos > (alrSafePos[LA_Z1] + lrSafeTolerance))
+		OR (aTRobotAxis[LA_Z2].lrCurrentPos > (alrSafePos[LA_Z2] + lrSafeTolerance)))) THEN
+	IF (sCurrentState.eStatus = MS_Manual) OR (sCurrentState.eStatus = MS_Init) OR (sCurrentState.eStatus = MS_Stopped) THEN
+		bConflictDetected := false;
+	ELSE
+		aeMoveRobotCommand[LA_X] := AC_ForceStop;
+		aeMoveRobotCommand[LA_Y] := AC_ForceStop;
+		aeMoveRobotCommand[LA_Z1] := AC_ForceStop;
+		aeMoveRobotCommand[LA_Z2] := AC_ForceStop;
+		sCurrentState.bInitDone := FALSE;
+		bUnsecuredAeraEntry := TRUE;
+		bConflictDetected := TRUE;	
+	END_IF
+END_IF
+
+(* ------------------------------------------------------ END OF MOVE SECURITY CHECK -------------------------------------------------------------------*)
+
+(* Robot command *)
+
+IF (sCurrentState.eStatus = MS_Manual) THEN
+	FOR iAxis:=0 TO 4 DO
+		IF bManualZIsSafe THEN
+			alrRobotSpeed[iAxis] := aTRobotAxis[iAxis].lrFastManualSpeed;
+		ELSE
+			alrRobotSpeed[iAxis] := aTRobotAxis[iAxis].lrManualSpeed;;
+		END_IF
+	END_FOR
+END_IF
+
+aTRobotAxis[LA_X](
+	eCommand 		:= aeMoveRobotCommand[LA_X],
+	lrTargetPos 		:= alrTargetPos[LA_X],
+	lrTargetSpeed 	:= alrRobotSpeed[LA_X],
+	lrAcceleration  := alrRobotAcceleration[LA_X],
+	lrDeceleration	:= alrRobotDeceleration[LA_X],
+	lrJerk			:= alrRobotJerk[LA_X],
+	sAxis		 	:= sXAxisRef,
+	bHomeSensor 	:= bHomeX,
+	eAxisType		:= AT_AX5000,
+	bPowerIsOn		:= bPowerOn,
+	bPosLimitSwitch	:= NOT bLimitPosX,
+	bNegLimitSwitch	:= NOT bLimitNegX,
+	lrMoveOutDist	:= 100,
+	bResetErrors	 	:= bResetErrors,
+	stServoButton 	:= TManualCmd.aTAxis[LA_X].ServoON
+	);
+aeMoveRobotCommand[LA_X] := AC_None;
+bXAxisError := (aTRobotAxis[LA_X].eCurrentState = AS_InError);
+
+aTRobotAxis[LA_Y](
+	eCommand 		:= aeMoveRobotCommand[LA_Y],
+	lrTargetPos 		:= alrTargetPos[LA_Y],
+	lrTargetSpeed 	:= alrRobotSpeed[LA_Y],
+	lrAcceleration  := alrRobotAcceleration[LA_Y],
+	lrDeceleration	:= alrRobotDeceleration[LA_Y],
+	lrJerk			:= alrRobotJerk[LA_Y],
+	sAxis		 	:= sYAxisRef,
+	bHomeSensor 	:= bHomeY,
+	eAxisType		:= AT_AX5000,
+	bPowerIsOn		:= bPowerOn,
+	bPosLimitSwitch	:= NOT bLimitPosY,
+	bNegLimitSwitch	:= NOT bLimitNegY,
+	lrMoveOutDist	:= 100,
+	bResetErrors	 	:= bResetErrors,
+	stServoButton 	:= TManualCmd.aTAxis[LA_Y].ServoON
+
+);
+aeMoveRobotCommand[LA_Y] := AC_None;
+bYAxisError := (aTRobotAxis[LA_Y].eCurrentState = AS_InError);
+
+aTRobotAxis[LA_Z1](
+	eCommand 		:= aeMoveRobotCommand[LA_Z1],
+	lrTargetPos 		:= alrTargetPos[LA_Z1],
+	lrTargetSpeed 	:= alrRobotSpeed[LA_Z1],
+	sAxis	 		:= sZ1AxisRef,
+	bHomeSensor 	:= bHomeZ1,
+	bPowerIsOn		:= bPowerOn,
+	bPosLimitSwitch	:= NOT bLimitPosZ1,
+	bNegLimitSwitch	:= NOT bLimitNegZ1,
+	lrMoveOutDist	:= 10,
+	bResetErrors	 	:= bResetErrors,
+	stServoButton 	:= TManualCmd.aTAxis[LA_Z1].ServoON
+);
+aeMoveRobotCommand[LA_Z1] := AC_None;
+bZ1AxisError := (aTRobotAxis[LA_Z1].eCurrentState = AS_InError);
+
+aTRobotAxis[LA_Z2](
+	eCommand 		:= aeMoveRobotCommand[LA_Z2],
+	lrTargetPos 		:= alrTargetPos[LA_Z2],
+	lrTargetSpeed 	:= alrRobotSpeed[LA_Z2],
+	sAxis		 	:= sZ2AxisRef,
+	bHomeSensor 	:= bHomeZ2,
+	bPowerIsOn		:= bPowerOn,
+	bPosLimitSwitch	:= NOT bLimitPosZ2,
+	bNegLimitSwitch	:= NOT bLimitNegZ2,
+	lrMoveOutDist	:= 10,
+	bResetErrors	 	:= bResetErrors,
+	stServoButton 	:= TManualCmd.aTAxis[LA_Z2].ServoON
+);
+aeMoveRobotCommand[LA_Z2] := AC_None;
+bZ2AxisError := (aTRobotAxis[LA_Z2].eCurrentState = AS_InError);
+
+aTRobotAxis[LA_THETA](
+	eCommand 		:= aeMoveRobotCommand[LA_THETA],
+	lrTargetPos 		:= alrTargetPos[LA_THETA],
+	lrTargetSpeed 	:= alrRobotSpeed[LA_THETA],
+	sAxis		 	:= sThetaAxisRef,
+	bPowerIsOn		:= bPowerOn,
+	bResetErrors	 	:= bResetErrors,
+	eHomingAxisType := AHT_OnZeroEncoder,
+	stServoButton 	:= TManualCmd.aTAxis[LA_THETA].ServoON
+);
+aeMoveRobotCommand[LA_THETA] := AC_None;
+bTAxisError := (aTRobotAxis[LA_THETA].eCurrentState = AS_InError);
+
+(* Get move result *)
+eRobotXYTStatus := AS_Moving;
+IF (aTRobotAxis[LA_X].eCurrentState = AS_InError) OR (aTRobotAxis[LA_Y].eCurrentState = AS_InError) OR (aTRobotAxis[LA_THETA].eCurrentState = AS_InError) THEN
+	eRobotXYTStatus := AS_InError;
+ELSIF (aTRobotAxis[LA_X].eCurrentState = AS_InPosition) AND (aTRobotAxis[LA_Y].eCurrentState = AS_InPosition) AND (aTRobotAxis[LA_THETA].eCurrentState = AS_InPosition) THEN
+		eRobotXYTStatus := AS_InPosition;
+END_IF
+
+(* Handle part vacuum *)
+aTHeadVacuum[0](
+	bEnableVacuum		:= abEnableHeadVacuum[0],
+	tVacErrorDelay		:= INT_TO_TIME(sVaccumSettingsHead.iErrorDelay),
+	tBlowingTime			:= INT_TO_TIME(sVaccumSettingsHead.iBlowing),
+	tWaitVacuumOK		:= INT_TO_TIME(sVaccumSettingsHead.iWaitWhenVacuumOk),
+	bReset				:= bResetErrors  OR abResetVacuum[0],
+	iVacuum				:= iHead1VacuumFlow,
+	lrVacuumThreshold	 :=  alrVacuumThreshold[0],
+	bDisableVacuumChecking := abBypassVacuumError[0],
+	bVacuumOn			=> bActivateHead1Vacuum,
+	bBlowOn				=> bActivateHead1Blowing,
+	bVacuumError		=> bHead1VacuumError
+);
+abResetVacuum[0] := FALSE;
+IF abBypassVacuumError[0] AND sCurrentState.eStatus = MS_Running THEN
+	bHead1VacuumError := FALSE;
+END_IF
+IF (bResetErrors AND (sCurrentState.eStatus = MS_Stopped) AND bHead1VacuumError) THEN
+	abEnableHeadVacuum[0] := FALSE;
+END_IF
+
+aTHeadVacuum[1](
+	bEnableVacuum		:= abEnableHeadVacuum[1],
+	tVacErrorDelay		:= INT_TO_TIME(sVaccumSettingsHead.iErrorDelay),
+	tBlowingTime			:= INT_TO_TIME(sVaccumSettingsHead.iBlowing),
+	tWaitVacuumOK		:= INT_TO_TIME(sVaccumSettingsHead.iWaitWhenVacuumOk),
+	bReset				:= bResetErrors  OR abResetVacuum[1],
+	iVacuum				:= iHead2VacuumFlow,
+	lrVacuumThreshold	 :=  alrVacuumThreshold[1],
+	bDisableVacuumChecking := abBypassVacuumError[1],
+	bVacuumOn			=> bActivateHead2Vacuum,
+	bBlowOn				=> bActivateHead2Blowing,
+	bVacuumError		=> bHead2VacuumError
+);
+abResetVacuum[1] := FALSE;
+IF abBypassVacuumError[1] AND sCurrentState.eStatus = MS_Running THEN
+	bHead2VacuumError := FALSE;
+END_IF
+IF (bResetErrors AND (sCurrentState.eStatus = MS_Stopped) AND bHead2VacuumError) THEN
+	abEnableHeadVacuum[1] := FALSE;
+END_IF
+
+(* Handle plate vacuum *)
+TPlateVacuum(
+	tVacErrorDelay		:= INT_TO_TIME(sVaccumSettingsPlate.iErrorDelay),
+	tBlowingTime			:= INT_TO_TIME(sVaccumSettingsPlate.iBlowing),
+	tWaitVacuumOK		:= INT_TO_TIME(sVaccumSettingsPlate.iWaitWhenVacuumOk),
+	bEnableVacuum	:= bEnablePlateVacuum,
+	bReset			:= bResetErrors,
+	bVacuumOK		:= bPlateVacuumIsOk,
+	bVacuumOn		=> bActivatePlateVacuum,
+	bBlowOn			=> bActivatePlateBlowing,
+	bVacuumError	=> bPlateVacuumError
+);
+
+(* Check jack error *)
+TCheckJack(
+	bJackGoOut	:= bMovePlateTakerDown,
+	bJackIsIn	:= bPlateTakerIsUp,
+	bJackIsOut	:= bPlateTakerIsDown,
+	tTimeOut		:= t#2s,
+	bResetErrors := bResetErrors,
+	bJackError	=> bJackError
+);
+
+IF bJackError OR bXAxisError OR bYAxisError OR bZ1AxisError OR bZ2AxisError OR bTAxisError OR bHead1VacuumError OR bHead2VacuumError OR bPlateVacuumError OR bConflictDetected  OR bZSensorOutOfRangeError THEN
+	sCurrentState.bInError := TRUE;
+	IF (sCurrentState.eStatus <> MS_Manual) AND (sCurrentState.eStatus <> MS_Stopped) AND (sCurrentState.eStatus <> MS_Init) THEN
+		sCurrentState.eStatus := MS_Ready;
+	END_IF
+END_IF
+
+IF (NOT bPowerOn OR bXAxisError OR bYAxisError OR bZ1AxisError OR bZ2AxisError OR bTAxisError) THEN
+	sCurrentState.bInitDone := FALSE;
+	IF (sCurrentState.eStatus <> MS_Manual) THEN
+		sCurrentState.eStatus := MS_Stopped;
+	END_IF
+END_IF
+
+IF bNewJob THEN
+(*	sProdLot.dProdQty := 0;
+	sProdLot.dGoodQty := 0;
+	sProdLot.dLoadedQty := 0; *)
+	sProdLot.dEstimatedTimeLeft := 0;
+END_IF
+sProdLot.dProductionTime := TIME_TO_DWORD(TJobElapsed);
+
+CASE sRunData.eModule OF
+	LMP_Table:
+		sOutGiveToTable := sOutGiveToModule;
+		sOutTakeFromTable := sOutTakeFromModule;
+	LMP_TurnOverFix,LMP_TurnOverArm:
+		sOutGiveToTurnOver := sOutGiveToModule;
+		sOutTakeFromTurnOver := sOutTakeFromModule;
+END_CASE
+
+(* Detect if lift seems to move to refresh Z position *)
+IF eLift1RunStatus <> RS_WaitRequest THEN
+	alrZLiftPos[LTP_Lift1] := 0;
+END_IF
+IF eLift2RunStatus <> RS_WaitRequest THEN
+	alrZLiftPos[LTP_Lift2] := 0;
+END_IF
+
+sRunData.lrZPositionTakeGive := ZPositionTakeGive;
+bVacuumInUse := bEnablePlateVacuum OR (abEnableHeadVacuum[0] AND NOT bHead1VacuumError)  OR (abEnableHeadVacuum[1] AND NOT bHead2VacuumError) ;
+bMovePlateTakerUp := NOT bMovePlateTakerDown;
+
+sCurrentState.bInterlocked := bManInterlock AND  (sCurrentState.eStatus = MS_Manual);
+bModuleError := sCurrentState.bInError;
+sCurrentState.bRunning := (sCurrentState.eStatus = MS_Running);
+IF (sCurrentState.eStatus <> MS_Running) THEN eRunStatus := RS_NotRunning; END_IF
+
+iStep := sCurrentState.eStep;]]></ST>
+    </Implementation>
+    <LineIds Name="LoaderHdl">
+      <LineId Id="224" Count="18" />
+      <LineId Id="8823" Count="0" />
+      <LineId Id="8806" Count="0" />
+      <LineId Id="8805" Count="0" />
+      <LineId Id="8810" Count="0" />
+      <LineId Id="8807" Count="0" />
+      <LineId Id="8813" Count="1" />
+      <LineId Id="8811" Count="0" />
+      <LineId Id="8816" Count="0" />
+      <LineId Id="8819" Count="3" />
+      <LineId Id="8817" Count="0" />
+      <LineId Id="8808" Count="0" />
+      <LineId Id="243" Count="5" />
+      <LineId Id="8545" Count="0" />
+      <LineId Id="249" Count="53" />
+      <LineId Id="3937" Count="0" />
+      <LineId Id="303" Count="2" />
+      <LineId Id="3700" Count="0" />
+      <LineId Id="3697" Count="0" />
+      <LineId Id="3709" Count="0" />
+      <LineId Id="308" Count="0" />
+      <LineId Id="3710" Count="0" />
+      <LineId Id="3938" Count="2" />
+      <LineId Id="3953" Count="0" />
+      <LineId Id="3943" Count="6" />
+      <LineId Id="3703" Count="0" />
+      <LineId Id="4916" Count="0" />
+      <LineId Id="3706" Count="0" />
+      <LineId Id="3711" Count="1" />
+      <LineId Id="310" Count="0" />
+      <LineId Id="3950" Count="1" />
+      <LineId Id="311" Count="72" />
+      <LineId Id="5412" Count="0" />
+      <LineId Id="384" Count="143" />
+      <LineId Id="6959" Count="2" />
+      <LineId Id="528" Count="0" />
+      <LineId Id="8295" Count="0" />
+      <LineId Id="529" Count="18" />
+      <LineId Id="6957" Count="0" />
+      <LineId Id="549" Count="37" />
+      <LineId Id="4674" Count="0" />
+      <LineId Id="587" Count="0" />
+      <LineId Id="4675" Count="0" />
+      <LineId Id="588" Count="12" />
+      <LineId Id="4681" Count="0" />
+      <LineId Id="601" Count="90" />
+      <LineId Id="5174" Count="2" />
+      <LineId Id="696" Count="23" />
+      <LineId Id="5178" Count="3" />
+      <LineId Id="725" Count="25" />
+      <LineId Id="5409" Count="0" />
+      <LineId Id="5408" Count="0" />
+      <LineId Id="751" Count="0" />
+      <LineId Id="5352" Count="1" />
+      <LineId Id="754" Count="6" />
+      <LineId Id="5186" Count="0" />
+      <LineId Id="762" Count="1" />
+      <LineId Id="5187" Count="0" />
+      <LineId Id="765" Count="1" />
+      <LineId Id="5188" Count="0" />
+      <LineId Id="768" Count="0" />
+      <LineId Id="771" Count="0" />
+      <LineId Id="5189" Count="1" />
+      <LineId Id="773" Count="11" />
+      <LineId Id="5197" Count="0" />
+      <LineId Id="786" Count="0" />
+      <LineId Id="5198" Count="0" />
+      <LineId Id="788" Count="0" />
+      <LineId Id="790" Count="1" />
+      <LineId Id="5195" Count="1" />
+      <LineId Id="793" Count="59" />
+      <LineId Id="6425" Count="0" />
+      <LineId Id="6433" Count="0" />
+      <LineId Id="854" Count="13" />
+      <LineId Id="6703" Count="0" />
+      <LineId Id="868" Count="8" />
+      <LineId Id="4684" Count="0" />
+      <LineId Id="877" Count="39" />
+      <LineId Id="5933" Count="0" />
+      <LineId Id="917" Count="3" />
+      <LineId Id="5208" Count="1" />
+      <LineId Id="925" Count="1" />
+      <LineId Id="5210" Count="1" />
+      <LineId Id="928" Count="10" />
+      <LineId Id="5218" Count="1" />
+      <LineId Id="941" Count="0" />
+      <LineId Id="944" Count="3" />
+      <LineId Id="5216" Count="1" />
+      <LineId Id="949" Count="1" />
+      <LineId Id="6945" Count="0" />
+      <LineId Id="952" Count="1" />
+      <LineId Id="6953" Count="0" />
+      <LineId Id="954" Count="1" />
+      <LineId Id="4660" Count="0" />
+      <LineId Id="4663" Count="0" />
+      <LineId Id="5921" Count="0" />
+      <LineId Id="5931" Count="0" />
+      <LineId Id="6952" Count="0" />
+      <LineId Id="5924" Count="0" />
+      <LineId Id="5922" Count="0" />
+      <LineId Id="5926" Count="1" />
+      <LineId Id="5925" Count="0" />
+      <LineId Id="6943" Count="0" />
+      <LineId Id="6175" Count="0" />
+      <LineId Id="5923" Count="0" />
+      <LineId Id="4667" Count="0" />
+      <LineId Id="4661" Count="0" />
+      <LineId Id="4668" Count="3" />
+      <LineId Id="4662" Count="0" />
+      <LineId Id="960" Count="35" />
+      <LineId Id="998" Count="1" />
+      <LineId Id="5340" Count="1" />
+      <LineId Id="1001" Count="26" />
+      <LineId Id="6181" Count="0" />
+      <LineId Id="1028" Count="2" />
+      <LineId Id="1033" Count="0" />
+      <LineId Id="6186" Count="1" />
+      <LineId Id="6183" Count="0" />
+      <LineId Id="6185" Count="0" />
+      <LineId Id="6182" Count="0" />
+      <LineId Id="5346" Count="1" />
+      <LineId Id="1035" Count="58" />
+      <LineId Id="1096" Count="0" />
+      <LineId Id="5225" Count="1" />
+      <LineId Id="1098" Count="9" />
+      <LineId Id="1110" Count="0" />
+      <LineId Id="5232" Count="1" />
+      <LineId Id="1112" Count="52" />
+      <LineId Id="4653" Count="1" />
+      <LineId Id="4657" Count="1" />
+      <LineId Id="5238" Count="1" />
+      <LineId Id="1172" Count="17" />
+      <LineId Id="1192" Count="0" />
+      <LineId Id="5246" Count="3" />
+      <LineId Id="1193" Count="2" />
+      <LineId Id="1197" Count="51" />
+      <LineId Id="7741" Count="0" />
+      <LineId Id="1249" Count="7" />
+      <LineId Id="1259" Count="0" />
+      <LineId Id="5254" Count="1" />
+      <LineId Id="1261" Count="36" />
+      <LineId Id="4414" Count="1" />
+      <LineId Id="1298" Count="0" />
+      <LineId Id="1301" Count="0" />
+      <LineId Id="5260" Count="1" />
+      <LineId Id="1303" Count="7" />
+      <LineId Id="1313" Count="0" />
+      <LineId Id="5266" Count="1" />
+      <LineId Id="1315" Count="53" />
+      <LineId Id="1371" Count="0" />
+      <LineId Id="5272" Count="1" />
+      <LineId Id="1373" Count="54" />
+      <LineId Id="1430" Count="0" />
+      <LineId Id="5278" Count="1" />
+      <LineId Id="1432" Count="9" />
+      <LineId Id="1444" Count="0" />
+      <LineId Id="5284" Count="1" />
+      <LineId Id="1446" Count="59" />
+      <LineId Id="1508" Count="1" />
+      <LineId Id="5290" Count="1" />
+      <LineId Id="1511" Count="13" />
+      <LineId Id="1527" Count="0" />
+      <LineId Id="5298" Count="1" />
+      <LineId Id="5296" Count="1" />
+      <LineId Id="1528" Count="2" />
+      <LineId Id="1532" Count="71" />
+      <LineId Id="1606" Count="0" />
+      <LineId Id="5304" Count="1" />
+      <LineId Id="1608" Count="35" />
+      <LineId Id="4416" Count="1" />
+      <LineId Id="1644" Count="1" />
+      <LineId Id="1648" Count="0" />
+      <LineId Id="5310" Count="1" />
+      <LineId Id="1650" Count="8" />
+      <LineId Id="1661" Count="0" />
+      <LineId Id="5316" Count="1" />
+      <LineId Id="1663" Count="29" />
+      <LineId Id="5322" Count="1" />
+      <LineId Id="1696" Count="68" />
+      <LineId Id="1767" Count="0" />
+      <LineId Id="5328" Count="1" />
+      <LineId Id="1769" Count="40" />
+      <LineId Id="1812" Count="1" />
+      <LineId Id="5334" Count="1" />
+      <LineId Id="1815" Count="26" />
+      <LineId Id="5147" Count="1" />
+      <LineId Id="5355" Count="0" />
+      <LineId Id="5157" Count="0" />
+      <LineId Id="5388" Count="1" />
+      <LineId Id="5356" Count="0" />
+      <LineId Id="5361" Count="0" />
+      <LineId Id="5390" Count="2" />
+      <LineId Id="7206" Count="0" />
+      <LineId Id="7755" Count="0" />
+      <LineId Id="7759" Count="2" />
+      <LineId Id="7754" Count="0" />
+      <LineId Id="7749" Count="0" />
+      <LineId Id="5155" Count="0" />
+      <LineId Id="5357" Count="0" />
+      <LineId Id="5413" Count="0" />
+      <LineId Id="5418" Count="0" />
+      <LineId Id="5417" Count="0" />
+      <LineId Id="5414" Count="1" />
+      <LineId Id="5419" Count="1" />
+      <LineId Id="7217" Count="0" />
+      <LineId Id="8045" Count="0" />
+      <LineId Id="5400" Count="0" />
+      <LineId Id="5404" Count="0" />
+      <LineId Id="8046" Count="1" />
+      <LineId Id="5403" Count="0" />
+      <LineId Id="5407" Count="0" />
+      <LineId Id="5402" Count="0" />
+      <LineId Id="7256" Count="0" />
+      <LineId Id="5364" Count="3" />
+      <LineId Id="7234" Count="7" />
+      <LineId Id="5375" Count="0" />
+      <LineId Id="7242" Count="0" />
+      <LineId Id="5397" Count="1" />
+      <LineId Id="5381" Count="4" />
+      <LineId Id="5380" Count="0" />
+      <LineId Id="5150" Count="0" />
+      <LineId Id="5164" Count="0" />
+      <LineId Id="5151" Count="1" />
+      <LineId Id="5165" Count="0" />
+      <LineId Id="1842" Count="3" />
+      <LineId Id="3470" Count="0" />
+      <LineId Id="1846" Count="3" />
+      <LineId Id="2762" Count="0" />
+      <LineId Id="1851" Count="6" />
+      <LineId Id="1860" Count="6" />
+      <LineId Id="5687" Count="0" />
+      <LineId Id="3465" Count="0" />
+      <LineId Id="3236" Count="0" />
+      <LineId Id="3235" Count="0" />
+      <LineId Id="3239" Count="0" />
+      <LineId Id="3238" Count="0" />
+      <LineId Id="3240" Count="0" />
+      <LineId Id="3237" Count="0" />
+      <LineId Id="1867" Count="36" />
+      <LineId Id="4180" Count="0" />
+      <LineId Id="4178" Count="0" />
+      <LineId Id="4181" Count="0" />
+      <LineId Id="4179" Count="0" />
+      <LineId Id="1904" Count="27" />
+      <LineId Id="4183" Count="1" />
+      <LineId Id="4182" Count="0" />
+      <LineId Id="1932" Count="49" />
+      <LineId Id="4186" Count="3" />
+      <LineId Id="4185" Count="0" />
+      <LineId Id="1982" Count="318" />
+      <LineId Id="6438" Count="7" />
+      <LineId Id="2302" Count="7" />
+      <LineId Id="6454" Count="5" />
+      <LineId Id="2310" Count="5" />
+      <LineId Id="5428" Count="1" />
+      <LineId Id="5424" Count="0" />
+      <LineId Id="2319" Count="2" />
+      <LineId Id="5435" Count="1" />
+      <LineId Id="2322" Count="3" />
+      <LineId Id="5430" Count="1" />
+      <LineId Id="5433" Count="1" />
+      <LineId Id="5676" Count="1" />
+      <LineId Id="5679" Count="0" />
+      <LineId Id="5682" Count="4" />
+      <LineId Id="9078" Count="0" />
+      <LineId Id="5680" Count="0" />
+      <LineId Id="5678" Count="0" />
+      <LineId Id="2326" Count="19" />
+      <LineId Id="8795" Count="2" />
+      <LineId Id="2346" Count="15" />
+      <LineId Id="8798" Count="2" />
+      <LineId Id="2362" Count="69" />
+      <LineId Id="2987" Count="10" />
+      <LineId Id="2441" Count="9" />
+      <LineId Id="3000" Count="10" />
+      <LineId Id="2460" Count="78" />
+      <LineId Id="4673" Count="0" />
+      <LineId Id="4672" Count="0" />
+    </LineIds>
+  </POU>
+</TcPlcObject>

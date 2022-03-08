@@ -1,0 +1,67 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<TcPlcObject Version="1.1.0.1" ProductVersion="3.1.4022.12">
+  <POU Name="ConverterLinearLimit" Id="{9211234c-53a6-46fb-93ba-cdedc0f304e0}" SpecialFunc="None">
+    <Declaration><![CDATA[FUNCTION_BLOCK ConverterLinearLimit
+VAR_INPUT
+	iInput			: INT;
+	iHardwareMin 	: INT;
+	iHardwareMax 	: INT;
+	lrSoftwareMin 		: LREAL;
+	lrSoftwareMax 	: LREAL;
+	lrOffset			: LREAL := 0;
+END_VAR
+VAR_OUTPUT
+	lrValue				: LREAL;
+	bInputOutOfRange		: BOOL;
+END_VAR
+VAR
+	lrMinOut 			: LREAL;
+	lrMaxOut 			: LREAL;
+	iHwMinIn 		: LREAL;
+	iHwMaxIn		: LREAL;
+
+END_VAR]]></Declaration>
+    <Implementation>
+      <ST><![CDATA[lrValue := (
+
+			(
+				(INT_TO_LREAL(iInput) - INT_TO_LREAL(iHardwareMin))
+				/
+				(INT_TO_LREAL(iHardwareMax) - INT_TO_LREAL(iHardwareMin))
+			)
+			*
+			( lrSoftwareMax - lrSoftwareMin )
+		)
+		+ lrSoftwareMin;
+IF (lrSoftwareMin > lrSoftwareMax) THEN
+	lrMinOut := lrSoftwareMax;
+	lrMaxOut := lrSoftwareMin;
+ELSE
+	lrMinOut := lrSoftwareMin;
+	lrMaxOut := lrSoftwareMax;
+END_IF
+IF lrValue > lrMaxOut THEN lrValue := lrMaxOut; END_IF
+IF lrValue < lrMinOut THEN lrValue := lrMinOut; END_IF
+lrValue := lrValue + lrOffset;
+
+IF (iHardwareMin > iHardwareMax) THEN
+	iHwMinIn := iHardwareMax;
+	iHwMaxIn := iHardwareMin;
+ELSE
+	iHwMinIn := iHardwareMin;
+	iHwMaxIn := iHardwareMax;
+END_IF
+bInputOutOfRange := FALSE;
+IF (iInput < iHwMinIn) OR  (iInput > iHwMaxIn) THEN
+	bInputOutOfRange:= TRUE;
+ELSE
+	bInputOutOfRange:= FALSE;
+END_IF
+
+]]></ST>
+    </Implementation>
+    <LineIds Name="ConverterLinearLimit">
+      <LineId Id="20" Count="36" />
+    </LineIds>
+  </POU>
+</TcPlcObject>

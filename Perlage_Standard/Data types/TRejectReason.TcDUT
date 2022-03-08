@@ -1,0 +1,14 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<TcPlcObject Version="1.1.0.1" ProductVersion="3.1.4022.12">
+  <DUT Name="TRejectReason" Id="{6e446d14-b0af-499d-b1ae-7deb4832802c}">
+    <Declaration><![CDATA[TYPE TRejectReason :
+	(
+		RR_NoReason:=0,
+		RR_PearlingSusHead1,
+		RR_PearlingSusHead2,
+		RR_PearlingSousHead1,
+		RR_PearlingSousHead2
+	);
+END_TYPE]]></Declaration>
+  </DUT>
+</TcPlcObject>

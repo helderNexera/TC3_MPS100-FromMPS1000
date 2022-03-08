@@ -1,0 +1,16 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<TcPlcObject Version="1.1.0.1" ProductVersion="3.1.4022.12">
+  <DUT Name="TConfigFileData" Id="{35c27e91-0658-4f3a-a793-7658db3121c0}">
+    <Declaration><![CDATA[{attribute 'pack_mode' := '1'}
+TYPE TConfigFileData :
+STRUCT
+	bParallelProduction		: BOOL;
+	asPearlingData			: ARRAY[PS_SUS..PS_SOUS] OF TPearlingData;
+	asStickData				: ARRAY[0..1] OF TStickData;
+	sPlateData				: TPlateData;
+	sPartData				: TPartDataMMI;
+	acVisionRefFileName		: STRING(20);
+END_STRUCT
+END_TYPE]]></Declaration>
+  </DUT>
+</TcPlcObject>

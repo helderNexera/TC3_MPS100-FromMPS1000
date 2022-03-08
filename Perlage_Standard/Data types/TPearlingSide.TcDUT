@@ -1,0 +1,11 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<TcPlcObject Version="1.1.0.1" ProductVersion="3.1.4022.12">
+  <DUT Name="TPearlingSide" Id="{efcb4fb0-638d-4b14-97cc-76c401ace303}">
+    <Declaration><![CDATA[TYPE TPearlingSide :
+	(
+		PS_SUS := 0,
+		PS_SOUS
+	);
+END_TYPE]]></Declaration>
+  </DUT>
+</TcPlcObject>

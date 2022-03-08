@@ -1,0 +1,12 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<TcPlcObject Version="1.1.0.1" ProductVersion="3.1.4022.12">
+  <DUT Name="TManButton" Id="{0e3bb149-7173-4d69-90d4-0f73f2be6ce9}">
+    <Declaration><![CDATA[{attribute 'pack_mode' := '1'}
+TYPE TManButton :
+	STRUCT
+		Activate		: BOOL	 := FALSE;
+		Enable		: BOOL	 := FALSE;
+	END_STRUCT
+END_TYPE]]></Declaration>
+  </DUT>
+</TcPlcObject>

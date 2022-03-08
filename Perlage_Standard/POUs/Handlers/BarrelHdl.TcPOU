@@ -1,0 +1,800 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<TcPlcObject Version="1.1.0.1" ProductVersion="3.1.4022.12">
+  <POU Name="BarrelHdl" Id="{51774449-80dc-4a66-9872-425e66101f88}" SpecialFunc="None">
+    <Declaration><![CDATA[FUNCTION_BLOCK BarrelHdl
+
+(*
+	Description 	: Bloc fonction de gestion du barillet
+	Auteur		: GRM
+	Date		: 26.03.2014
+	Version		: 1.00
+
+	Modifications :
+
+*)
+
+VAR_INPUT
+	bEnable						: BOOL;
+	bNewJob					: BOOL;
+	bJackIsDown					: BOOL;
+	bJackIsUp					: BOOL;
+	bPowerOn					: BOOL;
+	bResetErrors					: BOOL;
+	bStickPresent					: BOOL;
+	bTableIndexed				: BOOL;
+	bTableNotIndexed			: BOOL;
+	bStopReq					: BOOL;
+	bPauseReq					: BOOL;
+	eCommand					: TModuleCommands;
+	iStickArea					: INT;
+	iStickUsedSection1			: INT;
+	iStickUsedSection2			: INT;
+	bSection1IsUsed				: BOOL;
+	bSection2IsUsed				: BOOL;
+	sInStickTake					: TTaker;
+	eRunCommand				: TRunCmdBarrel;
+	bManInterlock				: BOOL;
+END_VAR
+VAR_OUTPUT
+	bModuleError					: BOOL;
+	bBarrelAxisError				: BOOL;
+	bArea1StickWarning			: BOOL;
+	bArea2StickWarning			: BOOL;
+	bArea3StickWarning			: BOOL;
+	bArea4StickWarning			: BOOL;
+	bJackError					: BOOL;
+	bIndexError					: BOOL;
+	bBarrelEmptyError				: BOOL;
+	bMoveJackUp				: BOOL;
+	bIndexTable					: BOOL;
+	sOutStickTake				: TGiver;
+	eRunStatus					: TRunStatus;
+END_VAR
+VAR_IN_OUT
+	sCurrentState					: TModuleData;
+	TManualCmd					: TManBarrel;
+	sBarrelAxisRef				: AXIS_REF;
+END_VAR
+VAR PERSISTENT
+	lrBarrelTakenPos				: LREAL					:= 53;			(* Position du premier bâtonnet devant l'ejecteur *)
+	lrBarrelCheckPos				: LREAL					:= 270;			(* Position du premier bâtonnet devant le capteur *)
+	lrBarrelJogStep				: LREAL					:= 7.5;
+END_VAR
+VAR CONSTANT
+	iMaxPosition 					: INT := 11;
+	iMaxSection 					:INT := 4;
+	alrIndexSectionPosition		: ARRAY[1..iMaxSection,1..iMaxPosition] OF LREAL :=
+										    [7.5,    15,   22.5,   30,    37.5,   45,   52.5,    60,   67.5,   75,   82.5,   (* section A *)
+										  97.5, 105, 112.5, 120, 127.5, 135, 142.5, 150, 157.5, 165, 172.5,  (* section B *)
+										187.5, 195, 202.5, 210, 217.5, 225, 232.5, 240, 247.5, 255, 262.5,  (* section C *)
+										277.5, 285, 292.5, 300, 307.5, 315, 322.5, 330, 337.5, 345, 352.5];  (* section D *)
+END_VAR
+VAR
+	i							: INT;
+	j							: INT;
+	bStickFound					: BOOL;
+	bStartTimer					: BOOL					:= FALSE;
+	bCommandError				: BOOL					:= FALSE;
+	bBarrelNeedScan				: BOOL					:= FALSE;
+	eMoveBarrelAxisCommand		: TAxisCommands	:= AC_None;
+	lrBarrelTargetPos				: LREAL;
+	lrCurrentBarrelMoveSpeed		: LREAL;
+	TBarrelAxis					: StdAxis;
+	TBarrelDetectionTimer			: TON;
+	TJack						: FB_CheckJack1_2;
+	TTableIndex					: FB_CheckJack1_2;
+	iIndexPosition					: INT := 1;
+	iIndexSection					: INT := 1;
+	yMultiSection2Use				: BYTE := 1;
+	iScanPearling				: INT := 0;
+	iSearchIndexPosition			: INT := 1;
+	iSearchIndexSection			: INT := 1;
+	abStickPresent				: ARRAY[1..2,1..iMaxSection,1..iMaxPosition] OF BOOL :=
+										    [FALSE, FALSE, FALSE, FALSE, FALSE, FALSE, FALSE, FALSE, FALSE, FALSE, FALSE, (* section A *)
+										    FALSE, FALSE, FALSE, FALSE, FALSE, FALSE, FALSE, FALSE, FALSE, FALSE, FALSE, (* section B *)
+										    FALSE, FALSE, FALSE, FALSE, FALSE, FALSE, FALSE, FALSE, FALSE, FALSE, FALSE, (* section C *)
+										    FALSE, FALSE, FALSE, FALSE, FALSE, FALSE, FALSE, FALSE, FALSE, FALSE, FALSE]; (* section D *)
+END_VAR]]></Declaration>
+    <Implementation>
+      <ST><![CDATA[IF (NOT sCurrentState.bStepMode) THEN
+	sCurrentState.bWaitStep := FALSE;
+END_IF
+
+IF NOT bSection1IsUsed THEN
+	iStickUsedSection1 := 0;
+END_IF
+IF NOT bSection2IsUsed THEN
+	iStickUsedSection2 := 0;
+END_IF
+
+CASE eCommand OF
+	MC_NoCmd :
+		CASE sCurrentState.eStatus OF
+			MS_Init :
+				IF bEnable THEN
+					CASE sCurrentState.eStep OF
+						SP_InitStp1 : (* Init all synchros *)
+							bBarrelNeedScan := FALSE;
+							bArea1StickWarning := FALSE;
+							bArea2StickWarning := FALSE;
+							bArea3StickWarning := FALSE;
+							bArea4StickWarning := FALSE;
+							FOR i:=1 TO iMaxSection DO
+								FOR j:=1 TO iMaxPosition DO
+									abStickPresent[1,i,j]:= FALSE;
+									abStickPresent[2,i,j]:= FALSE;
+								END_FOR
+							END_FOR
+							sCurrentState.eStep := SP_InitStp2;
+						SP_InitStp2 : (* Lower jacks *)
+							bMoveJackUp := FALSE;
+							sCurrentState.eStep := SP_InitStp3;
+						SP_InitStp3 : (* Check if jacks are down *)
+							IF bJackIsDown THEN
+								sCurrentState.eStep := SP_InitStp4;
+							END_IF
+						SP_InitStp4 : (* Lower index *)
+							bIndexTable := FALSE;
+							sCurrentState.eStep := SP_InitStp5;
+						SP_InitStp5 : (* Check if index are down *)
+							IF bJackIsDown AND bTableNotIndexed THEN
+								sCurrentState.eStep := SP_InitStp6;
+							END_IF
+						SP_InitStp6 : (* Init barrel axis if modules are safe*)
+							eMoveBarrelAxisCommand := AC_Init;
+							sCurrentState.eStep := SP_InitStp7;
+						SP_InitStp7 : (* Wait init barrel is done*)
+							IF TBarrelAxis.eCurrentState = AS_InPosition THEN
+								IF bUseNewBarrelFunction THEN
+									sCurrentState.eStep := SP_InitStp30;
+								ELSE
+									sCurrentState.eStep := SP_InitStp10;
+								END_IF
+							END_IF
+						SP_InitStp10 : (* Mono section to use *)
+							iIndexPosition := 1;
+							IF NOT bSection1IsUsed AND NOT bSection2IsUsed THEN (* no section used *)
+								iIndexSection := 1;
+								sCurrentState.eStep := SP_InitStp17;
+							ELSIF NOT bSection1IsUsed THEN (* section 1 not used *)
+								iIndexSection := iStickUsedSection2 + 1;
+								iScanPearling:= 2;
+								bStickFound := FALSE;
+								sCurrentState.eStep := SP_InitStp11;
+							ELSE
+								iIndexSection := iStickUsedSection1 + 1;
+								iScanPearling:= 1;
+								bStickFound := FALSE;
+								sCurrentState.eStep := SP_InitStp11;
+							END_IF
+						SP_InitStp11 : (* Turn the barrel to go to the check stick*)
+							lrBarrelTargetPos := alrIndexSectionPosition[iIndexSection, iIndexPosition] + lrBarrelCheckPos - alrIndexSectionPosition[1, 1];
+							eMoveBarrelAxisCommand := AC_MoveAtAbsPos;
+							bStartTimer := FALSE;
+							sCurrentState.eStep := SP_InitStp13;
+						SP_InitStp13 : (* Wait until position is reached to start the timer *)
+							IF (TBarrelAxis.eCurrentState = AS_InPosition) THEN
+								bStartTimer := TRUE;
+								sCurrentState.eStep := SP_InitStp15;
+							END_IF
+						SP_InitStp15: (* Wait until the end of timer to detect if the stick is here *)
+							IF TBarrelDetectionTimer.Q THEN
+								bStartTimer := FALSE;
+								abStickPresent[iScanPearling,iIndexSection, iIndexPosition] := bStickPresent;
+								IF (bStickPresent) THEN bStickFound := TRUE; END_IF
+								iIndexPosition := iIndexPosition + 1;
+								IF (iIndexPosition > iMaxPosition) THEN
+									CASE iIndexSection OF
+										1 :
+											bArea1StickWarning := NOT bStickFound;
+										2 :
+											bArea2StickWarning := NOT bStickFound;
+										3 :
+											bArea3StickWarning := NOT bStickFound;
+										4 :
+											bArea4StickWarning := NOT bStickFound;
+									END_CASE
+									bStickFound := FALSE;
+									iIndexPosition := 1;
+									iScanPearling:=iScanPearling + 1;
+									IF (iScanPearling > 2)  OR (iStickUsedSection1 = iStickUsedSection2) OR NOT bSection2IsUsed THEN
+										IF NOT bSection1IsUsed THEN
+											iIndexSection := iStickUsedSection2 + 1;
+										ELSE
+											iIndexSection := iStickUsedSection1 + 1;
+										END_IF
+										sCurrentState.eStep := SP_InitStp17;
+									ELSE
+										iIndexSection:= iStickUsedSection2 + 1;
+										sCurrentState.eStep := SP_InitStp11;
+									END_IF
+								ELSE
+									sCurrentState.eStep := SP_InitStp11;
+								END_IF
+							END_IF
+						SP_InitStp17 : (* Move to taken,section used 1, 1 *)
+							lrBarrelTargetPos := alrIndexSectionPosition[iIndexSection, iIndexPosition] + lrBarrelTakenPos - alrIndexSectionPosition[1, 1];
+							eMoveBarrelAxisCommand := AC_MoveAtAbsPos;
+							sCurrentState.eStep := SP_InitStp19;
+						SP_InitStp19 : (* Wait until position is reached  *)
+							IF (TBarrelAxis.eCurrentState = AS_InPosition) THEN
+								sCurrentState.eStep := SP_InitStp99;
+							END_IF
+						SP_InitStp30 : (* Multi section to use *)
+							iIndexPosition := 1;
+							IF NOT bSection1IsUsed AND NOT bSection2IsUsed THEN (* no section used *)
+								iIndexSection := 1;
+								sCurrentState.eStep := SP_InitStp37;
+							ELSIF NOT bSection1IsUsed THEN (* section 1 not used *)
+								yMultiSection2Use := INT_TO_BYTE(iStickUsedSection2);
+								iScanPearling:= 2;
+								bStickFound := FALSE;
+								sCurrentState.eStep := SP_InitStp31;
+							ELSE
+								yMultiSection2Use := INT_TO_BYTE(iStickUsedSection1);
+								iScanPearling:= 1;
+								bStickFound := FALSE;
+								sCurrentState.eStep := SP_InitStp31;
+							END_IF
+						SP_InitStp31 :
+							iIndexSection := BYTE_TO_INT( yGetActiveSection(yMultiSection2Use));
+							IF iIndexSection = 0 THEN
+								iIndexSection := 1;
+								sCurrentState.eStep := SP_InitStp37;
+							ELSE
+								sCurrentState.eStep := SP_InitStp32;
+							END_IF
+						SP_InitStp32 : (* Turn the barrel to go to the check stick*)
+							lrBarrelTargetPos := alrIndexSectionPosition[iIndexSection, iIndexPosition] + lrBarrelCheckPos - alrIndexSectionPosition[1, 1];
+							eMoveBarrelAxisCommand := AC_MoveAtAbsPos;
+							bStartTimer := FALSE;
+							sCurrentState.eStep := SP_InitStp33;
+						SP_InitStp33 : (* Wait until position is reached to start the timer *)
+							IF (TBarrelAxis.eCurrentState = AS_InPosition) THEN
+								bStartTimer := TRUE;
+								sCurrentState.eStep := SP_InitStp35;
+							END_IF
+						SP_InitStp35: (* Wait until the end of timer to detect if the stick is here *)
+							IF TBarrelDetectionTimer.Q THEN
+								bStartTimer := FALSE;
+								abStickPresent[iScanPearling,iIndexSection, iIndexPosition] := bStickPresent;
+								IF (bStickPresent) THEN bStickFound := TRUE; END_IF
+								iIndexPosition := iIndexPosition + 1;
+								IF (iIndexPosition > iMaxPosition) THEN
+									CASE iIndexSection OF
+										1 :
+											bArea1StickWarning := NOT bStickFound;
+										2 :
+											bArea2StickWarning := NOT bStickFound;
+										3 :
+											bArea3StickWarning := NOT bStickFound;
+										4 :
+											bArea4StickWarning := NOT bStickFound;
+									END_CASE
+									bStickFound := FALSE;
+									iIndexPosition := 1;
+									iIndexSection := BYTE_TO_INT(yGetActiveSection(yMultiSection2Use));
+									IF iIndexSection = 0 THEN
+										iScanPearling:=iScanPearling + 1;
+(*										IF (iScanPearling > 2)  OR (iStickUsedSection1 = iStickUsedSection2) OR NOT bSection2IsUsed THEN*)
+										IF (iScanPearling > 2)  OR NOT bSection2IsUsed THEN
+											IF NOT bSection1IsUsed THEN
+												yMultiSection2Use := INT_TO_BYTE(iStickUsedSection2);
+												iIndexSection := BYTE_TO_INT( yGetActiveSection(yMultiSection2Use));
+											ELSE
+												yMultiSection2Use := INT_TO_BYTE(iStickUsedSection1);
+												iIndexSection := BYTE_TO_INT( yGetActiveSection(yMultiSection2Use));
+											END_IF
+											sCurrentState.eStep := SP_InitStp37;
+										ELSE
+											yMultiSection2Use := INT_TO_BYTE(iStickUsedSection2);
+											sCurrentState.eStep := SP_InitStp31;
+										END_IF
+									ELSE
+										sCurrentState.eStep := SP_InitStp32;
+									END_IF
+								ELSE
+									sCurrentState.eStep := SP_InitStp32;
+								END_IF
+							END_IF
+						SP_InitStp37 : (* Move to taken,section used 1, 1 *)
+							lrBarrelTargetPos := alrIndexSectionPosition[iIndexSection, iIndexPosition] + lrBarrelTakenPos - alrIndexSectionPosition[1, 1];
+							eMoveBarrelAxisCommand := AC_MoveAtAbsPos;
+							sCurrentState.eStep := SP_InitStp39;
+						SP_InitStp39 : (* Wait until position is reached  *)
+							IF (TBarrelAxis.eCurrentState = AS_InPosition) THEN
+								sCurrentState.eStep := SP_InitStp99;
+							END_IF
+						SP_InitStp99 : (* Leave Init *)
+							sCurrentState.eStep := SP_RunStp1;
+							sCurrentState.eStatus := MS_Ready;
+							sCurrentState.bInitDone := TRUE;
+					END_CASE
+				ELSE
+					sCurrentState.eStatus := MS_Ready;
+					sCurrentState.bInitDone := TRUE;
+				END_IF
+			MS_Running :
+				IF bEnable AND  (NOT sCurrentState.bWaitStep) THEN
+					CASE sCurrentState.eStep OF
+						SP_RunStp1:
+							eRunStatus := RS_WaitRequest;
+							CASE eRunCommand OF
+								RCB_None:
+									IF bStopReq  THEN
+										sCurrentState.eStatus := MS_Ready;
+									ELSIF bPauseReq THEN
+										sCurrentState.eStatus := MS_Paused;
+									END_IF
+								RCB_PrepareStick:
+									sCurrentState.eStep := SP_RunStp10;
+								RCB_GiveStick:
+									sOutStickTake.bHasGiven := FALSE;
+									sCurrentState.eStep := SP_RunStp20;
+							END_CASE
+							IF sCurrentState.eStep<> SP_RunStp1 THEN eRunStatus := RS_ProcessRequest1; END_IF
+						SP_RunStp10:(* Prepare Stick *)
+							 (* Search Stick *)
+							iSearchIndexPosition := 0;
+							FOR j:=1 TO 4 DO
+								FOR i:=1 TO iMaxPosition DO
+									IF abStickPresent[iStickArea,j,i] THEN
+										iSearchIndexSection := j;
+										iSearchIndexPosition := i;
+										EXIT;
+									END_IF
+								END_FOR
+							END_FOR
+							IF iSearchIndexPosition = 0 THEN
+								bBarrelEmptyError := TRUE;
+								sCurrentState.eStep := SP_RunStp1;
+							ELSIF iIndexPosition=iSearchIndexPosition AND iIndexSection=iSearchIndexSection AND bTableIndexed THEN
+								(* Already prepared *)
+								sCurrentState.eStep := SP_RunStp1;
+							ELSE
+								iIndexPosition := iSearchIndexPosition;
+								 iIndexSection := iSearchIndexSection;
+								sCurrentState.eStep := SP_RunStp11;
+							END_IF
+						SP_RunStp11:
+							(* Unlock table *)
+							bMoveJackUp := FALSE;
+							bIndexTable := FALSE;
+							sCurrentState.eStep := SP_RunStp12;
+						SP_RunStp12: (* Ready to move *)
+							IF bJackIsDown AND bTableNotIndexed THEN
+								sCurrentState.eStep := SP_RunStp13;
+							END_IF
+						SP_RunStp13: (* Move to Stick *)
+							lrBarrelTargetPos := alrIndexSectionPosition[iIndexSection, iIndexPosition] + lrBarrelTakenPos - alrIndexSectionPosition[1, 1];
+							eMoveBarrelAxisCommand := AC_MoveAtAbsPos;
+							sCurrentState.eStep := SP_RunStp14;
+						SP_RunStp14 : (* Wait until position is reached*)
+							IF (TBarrelAxis.eCurrentState = AS_InPosition) THEN
+								(* Lock table *)
+								bIndexTable := TRUE;
+								sCurrentState.eStep := SP_RunStp15;
+							END_IF
+						SP_RunStp15 :
+							IF bTableIndexed THEN
+								sCurrentState.eStep := SP_RunStp1;
+							END_IF
+						SP_RunStp20 : (* Raise the jack when pearling ready*)
+							IF NOT bTableIndexed THEN
+								bCommandError := TRUE;
+							END_IF
+							bMoveJackUp := FALSE;
+							IF bTableIndexed AND bJackisDown AND sInStickTake.bReadyToTake THEN
+								bBarrelNeedScan := TRUE;
+								bMoveJackUp := TRUE;
+								sCurrentState.eStep := SP_RunStp21;
+							END_IF
+						SP_RunStp21 : (* Wait for the jack to be up *)
+							IF bJackisUp THEN
+								sOutStickTake.bHasGiven := TRUE;
+								sCurrentState.eStep := SP_RunStp22;
+							END_IF
+						SP_RunStp22 : (* Wait until the broach has taken the stick *)
+							IF sInStickTake.bHasTaken THEN
+								sCurrentState.eStep := SP_RunStp23;
+							END_IF
+						SP_RunStp23 : (* Lower the jack *)
+							bMoveJackUp := FALSE;
+							sCurrentState.eStep := SP_RunStp24;
+						SP_RunStp24 : (* Wait for the jack to go in *)
+							IF bJackisDown THEN
+								(* Unlock table *)
+								bIndexTable := FALSE;
+								sCurrentState.eStep := SP_RunStp25;
+							END_IF
+						SP_RunStp25: (* Check if the stick is still here *)
+							IF bTableNotIndexed THEN
+								lrBarrelTargetPos := alrIndexSectionPosition[iIndexSection, iIndexPosition] + lrBarrelCheckPos - alrIndexSectionPosition[1, 1];
+								eMoveBarrelAxisCommand := AC_MoveAtAbsPos;
+								bStartTimer := FALSE;
+								sCurrentState.eStep := SP_RunStp26;
+							END_IF
+						SP_RunStp26 : (* Wait until position is reached to start the timer *)
+							IF (TBarrelAxis.eCurrentState = AS_InPosition) THEN
+								bStartTimer := TRUE;
+								sCurrentState.eStep := SP_RunStp27;
+							END_IF
+						SP_RunStp27: (* Wait until the end of timer to detect if the stick is still here *)
+							IF TBarrelDetectionTimer.Q THEN
+								bStartTimer := FALSE;
+								abStickPresent[1,iIndexSection, iIndexPosition] := bStickPresent;
+								abStickPresent[2,iIndexSection, iIndexPosition] := bStickPresent;
+								bBarrelNeedScan := FALSE;
+								sOutStickTake.bHasGiven := NOT bStickPresent;
+								sCurrentState.eStep := SP_RunStp1;
+							END_IF
+					END_CASE
+				END_IF
+			MS_Manual :
+				IF NOT bPowerOn THEN
+					TManualCmd.TMoveJackUp.Activate := FALSE;
+					TManualCmd.TIndexTable.Activate := FALSE;
+				END_IF
+				TManualCmd.TBarrelAxis.Home.Enable := bJackIsDown AND bTableNotIndexed AND ((TBarrelAxis.eCurrentState = AS_InPosition) OR (TBarrelAxis.eCurrentState = AS_NotHomed)) AND NOT 
+bManInterlock;
+				TManualCmd.TBarrelAxis.MoveBw.Enable := TBarrelAxis.eCurrentState = AS_InPosition AND bJackIsDown AND bTableNotIndexed AND NOT bManInterlock;
+				TManualCmd.TBarrelAxis.MoveFw.Enable := TManualCmd.TBarrelAxis.MoveBw.Enable;
+				TManualCmd.TBarrelAxisTakenPos.MoveToTeach.Enable := TManualCmd.TBarrelAxis.MoveBw.Enable;
+				TManualCmd.TMoveTaken.TMove1Step.Enable := TManualCmd.TBarrelAxis.MoveBw.Enable;
+				TManualCmd.TMoveTaken.TMoveSectionA.Enable := TManualCmd.TBarrelAxis.MoveBw.Enable;
+				TManualCmd.TMoveTaken.TMoveSectionB.Enable := TManualCmd.TBarrelAxis.MoveBw.Enable;
+				TManualCmd.TMoveTaken.TMoveSectionC.Enable := TManualCmd.TBarrelAxis.MoveBw.Enable;
+				TManualCmd.TMoveTaken.TMoveSectionD.Enable := TManualCmd.TBarrelAxis.MoveBw.Enable;
+				TManualCmd.TMoveCheck.TMove1Step.Enable := TManualCmd.TBarrelAxis.MoveBw.Enable;
+				TManualCmd.TMoveCheck.TMoveSectionA.Enable := TManualCmd.TBarrelAxis.MoveBw.Enable;
+				TManualCmd.TMoveCheck.TMoveSectionB.Enable := TManualCmd.TBarrelAxis.MoveBw.Enable;
+				TManualCmd.TMoveCheck.TMoveSectionC.Enable := TManualCmd.TBarrelAxis.MoveBw.Enable;
+				TManualCmd.TMoveCheck.TMoveSectionD.Enable := TManualCmd.TBarrelAxis.MoveBw.Enable;
+				TManualCmd.TBarrelAxisCheckPos.MoveToTeach.Enable := TManualCmd.TBarrelAxis.MoveBw.Enable;
+				TManualCmd.TBarrelAxis.CurrentPos := TBarrelAxis.lrCurrentPos;
+				TManualCmd.TBarrelAxisTakenPos.TeachedPos := lrBarrelTakenPos;
+				TManualCmd.TBarrelAxisCheckPos.TeachedPos := lrBarrelCheckPos;
+				TManualCmd.TIndexTable.Enable := ((TBarrelAxis.eCurrentState = AS_InPosition  AND bTableNotIndexed AND TManualCmd.iPosition = 1 AND bJackIsDown) OR bIndexTable) AND bPowerOn;
+				TManualCmd.TMoveJackUp.Enable := ((TBarrelAxis.eCurrentState = AS_InPosition AND bTableIndexed AND bJackIsDown) OR bMoveJackUp) AND bPowerOn;
+				TManualCmd.iIndexSection := iIndexSection;
+				TManualCmd.iIndexPosition := iIndexPosition;
+				TManualCmd.bStickPresent := bStickPresent;
+				CASE sCurrentState.eStep OF
+					SP_ManualStp0 :
+						TManualCmd.iPosition := 0; (* 0 undefined, 1 Taken position, 2 Check position , only used for HMI information *)
+						TManualCmd.TBarrelAxis.JogStep := lrBarrelJogStep;
+						TManualCmd.TBarrelAxis.MoveFw.Activate := FALSE;
+						TManualCmd.TBarrelAxis.MoveBw.Activate := FALSE;
+						TManualCmd.TBarrelAxisTakenPos.MoveToTeach.Activate := FALSE;
+						TManualCmd.TBarrelAxisCheckPos.MoveToTeach.Activate := FALSE;
+						TManualCmd.TBarrelAxisTakenPos.Teach := FALSE;
+						TManualCmd.TBarrelAxisCheckPos.Teach := FALSE;
+						TManualCmd.TMoveJackUp.Activate := bMoveJackUp;
+						TManualCmd.TIndexTable.Activate := bIndexTable;
+						TManualCmd.TMoveTaken.TMove1Step.Activate := FALSE;
+						TManualCmd.TMoveTaken.TMoveSectionA.Activate := FALSE;
+						TManualCmd.TMoveTaken.TMoveSectionB.Activate := FALSE;
+						TManualCmd.TMoveTaken.TMoveSectionC.Activate := FALSE;
+						TManualCmd.TMoveTaken.TMoveSectionD.Activate := FALSE;
+						TManualCmd.TMoveCheck.TMove1Step.Activate := FALSE;
+						TManualCmd.TMoveCheck.TMoveSectionA.Activate := FALSE;
+						TManualCmd.TMoveCheck.TMoveSectionB.Activate := FALSE;
+						TManualCmd.TMoveCheck.TMoveSectionC.Activate := FALSE;
+						TManualCmd.TMoveCheck.TMoveSectionD.Activate := FALSE;
+						TManualCmd.TBarrelAxis.Home.Activate := FALSE;
+						sCurrentState.eStep := SP_ManualStp1;
+						iIndexSection := iMaxSection;
+						iIndexPosition := iMaxPosition;
+					SP_ManualStp1:
+						IF bStopReq THEN
+							sCurrentState.eStatus := MS_Stopped;
+						ELSE
+							IF (lrBarrelJogStep <> TManualCmd.TBarrelAxis.JogStep) THEN
+								lrBarrelJogStep := TManualCmd.TBarrelAxis.JogStep;
+							END_IF
+							IF TManualCmd.TBarrelAxisTakenPos.Teach THEN
+								lrBarrelTakenPos := TBarrelAxis.lrCurrentPos;
+								TManualCmd.TBarrelAxisTakenPos.Teach := FALSE;
+							END_IF
+							IF TManualCmd.TBarrelAxisCheckPos.Teach THEN
+								lrBarrelCheckPos := TBarrelAxis.lrCurrentPos;
+								TManualCmd.TBarrelAxisCheckPos.Teach := FALSE;
+							END_IF
+							IF TManualCmd.TBarrelAxisTakenPos.MoveToTeach.Activate THEN
+								iIndexPosition := 1;
+								iIndexSection := 1;
+								lrBarrelTargetPos := TManualCmd.TBarrelAxisTakenPos.TeachedPos;
+								sCurrentState.eStep := SP_ManualStp10;
+								TManualCmd.iPosition := 1;
+							END_IF
+							IF TManualCmd.TBarrelAxisCheckPos.MoveToTeach.Activate THEN
+								iIndexPosition := 1;
+								iIndexSection := 1;
+								lrBarrelTargetPos := TManualCmd.TBarrelAxisCheckPos.TeachedPos;
+								sCurrentState.eStep := SP_ManualStp10;
+								TManualCmd.iPosition := 2;
+							END_IF
+							IF TManualCmd.TBarrelAxis.MoveBw.Activate THEN
+								lrBarrelTargetPos := lrBarrelTargetPos - lrBarrelJogStep;
+								sCurrentState.eStep := SP_ManualStp10;
+								TManualCmd.iPosition := 0;
+							END_IF
+							IF TManualCmd.TBarrelAxis.MoveFw.Activate THEN
+								lrBarrelTargetPos := lrBarrelTargetPos + lrBarrelJogStep;
+								sCurrentState.eStep := SP_ManualStp10;
+								TManualCmd.iPosition := 0;
+							END_IF
+							IF TManualCmd.TMoveTaken.TMove1Step.Activate THEN
+								IF (iIndexPosition >= iMaxPosition) THEN
+									iIndexPosition := 1;
+									IF (iIndexSection >= iMaxSection) THEN
+										iIndexSection := 1;
+									ELSE
+										iIndexSection:= iIndexSection + 1;
+									END_IF
+								ELSE
+									iIndexPosition:= iIndexPosition + 1;
+								END_IF
+								lrBarrelTargetPos := alrIndexSectionPosition[iIndexSection, iIndexPosition] + lrBarrelTakenPos - alrIndexSectionPosition[1, 1];
+								sCurrentState.eStep := SP_ManualStp10;
+								TManualCmd.iPosition := 1;
+							END_IF
+							IF TManualCmd.TMoveTaken.TMoveSectionA.Activate THEN
+								iIndexPosition := 1;
+								iIndexSection := 1;
+								lrBarrelTargetPos := alrIndexSectionPosition[iIndexSection, iIndexPosition] + lrBarrelTakenPos - alrIndexSectionPosition[1, 1];
+								sCurrentState.eStep := SP_ManualStp10;
+								TManualCmd.iPosition := 1;
+							END_IF
+							IF TManualCmd.TMoveTaken.TMoveSectionB.Activate THEN
+								iIndexPosition := 1;
+								iIndexSection := 2;
+								lrBarrelTargetPos := alrIndexSectionPosition[iIndexSection, iIndexPosition] + lrBarrelTakenPos - alrIndexSectionPosition[1, 1];
+								sCurrentState.eStep := SP_ManualStp10;
+								TManualCmd.iPosition := 1;
+							END_IF
+							IF TManualCmd.TMoveTaken.TMoveSectionC.Activate THEN
+								iIndexPosition := 1;
+								iIndexSection := 3;
+								lrBarrelTargetPos := alrIndexSectionPosition[iIndexSection, iIndexPosition] + lrBarrelTakenPos - alrIndexSectionPosition[1, 1];
+								sCurrentState.eStep := SP_ManualStp10;
+								TManualCmd.iPosition := 1;
+							END_IF
+							IF TManualCmd.TMoveTaken.TMoveSectionD.Activate THEN
+								iIndexPosition := 1;
+								iIndexSection := 4;
+								lrBarrelTargetPos := alrIndexSectionPosition[iIndexSection, iIndexPosition] + lrBarrelTakenPos - alrIndexSectionPosition[1, 1];
+								sCurrentState.eStep := SP_ManualStp10;
+								TManualCmd.iPosition := 1;
+							END_IF
+
+							IF TManualCmd.TMoveCheck.TMove1Step.Activate THEN
+								IF (iIndexPosition >= iMaxPosition) THEN
+									iIndexPosition := 1;
+									IF (iIndexSection >= iMaxSection) THEN
+										iIndexSection := 1;
+									ELSE
+										iIndexSection:= iIndexSection + 1;
+									END_IF
+								ELSE
+									iIndexPosition:= iIndexPosition + 1;
+								END_IF
+								lrBarrelTargetPos := alrIndexSectionPosition[iIndexSection, iIndexPosition] + lrBarrelCheckPos - alrIndexSectionPosition[1, 1];
+								sCurrentState.eStep := SP_ManualStp10;
+								TManualCmd.iPosition := 2;
+							END_IF
+							IF TManualCmd.TMoveCheck.TMoveSectionA.Activate THEN
+								iIndexPosition := 1;
+								iIndexSection := 1;
+								lrBarrelTargetPos := alrIndexSectionPosition[iIndexSection, iIndexPosition] + lrBarrelCheckPos - alrIndexSectionPosition[1, 1];
+								sCurrentState.eStep := SP_ManualStp10;
+								TManualCmd.iPosition := 2;
+							END_IF
+							IF TManualCmd.TMoveCheck.TMoveSectionB.Activate THEN
+								iIndexPosition := 1;
+								iIndexSection := 2;
+								lrBarrelTargetPos := alrIndexSectionPosition[iIndexSection, iIndexPosition] + lrBarrelCheckPos - alrIndexSectionPosition[1, 1];
+								sCurrentState.eStep := SP_ManualStp10;
+								TManualCmd.iPosition := 2;
+							END_IF
+							IF TManualCmd.TMoveCheck.TMoveSectionC.Activate THEN
+								iIndexPosition := 1;
+								iIndexSection := 3;
+								lrBarrelTargetPos := alrIndexSectionPosition[iIndexSection, iIndexPosition] + lrBarrelCheckPos - alrIndexSectionPosition[1, 1];
+								sCurrentState.eStep := SP_ManualStp10;
+								TManualCmd.iPosition := 2;
+							END_IF
+							IF TManualCmd.TMoveCheck.TMoveSectionD.Activate THEN
+								iIndexPosition := 1;
+								iIndexSection := 4;
+								lrBarrelTargetPos := alrIndexSectionPosition[iIndexSection, iIndexPosition] + lrBarrelCheckPos - alrIndexSectionPosition[1, 1];
+								sCurrentState.eStep := SP_ManualStp10;
+								TManualCmd.iPosition := 2;
+							END_IF
+							IF TManualCmd.TBarrelAxis.Home.Activate AND sCurrentState.eStep = SP_ManualStp1 THEN
+								sCurrentState.eStep := SP_ManualStp20;
+								TManualCmd.iPosition := 0;
+							END_IF
+							bMoveJackUp := TManualCmd.TMoveJackUp.Activate;
+							bIndexTable := TManualCmd.TIndexTable.Activate;
+						END_IF
+					SP_ManualStp10: (* Do the movement *)
+						eMoveBarrelAxisCommand := AC_MoveModulo;
+						sCurrentState.eStep := SP_ManualStp11;
+					SP_ManualStp11: (* Wait until position is reached *)
+						CASE TBarrelAxis.eCurrentState OF
+							AS_InPosition, AS_InError:
+								TManualCmd.TBarrelAxisTakenPos.MoveToTeach.Activate := FALSE;
+								TManualCmd.TBarrelAxisCheckPos.MoveToTeach.Activate := FALSE;
+								TManualCmd.TBarrelAxis.MoveFw.Activate := FALSE;
+								TManualCmd.TBarrelAxis.MoveBw.Activate := FALSE;
+								TManualCmd.TMoveTaken.TMove1Step.Activate := FALSE;
+								TManualCmd.TMoveTaken.TMoveSectionA.Activate := FALSE;
+								TManualCmd.TMoveTaken.TMoveSectionB.Activate := FALSE;
+								TManualCmd.TMoveTaken.TMoveSectionC.Activate := FALSE;
+								TManualCmd.TMoveTaken.TMoveSectionD.Activate := FALSE;
+								TManualCmd.TMoveCheck.TMove1Step.Activate := FALSE;
+								TManualCmd.TMoveCheck.TMoveSectionA.Activate := FALSE;
+								TManualCmd.TMoveCheck.TMoveSectionB.Activate := FALSE;
+								TManualCmd.TMoveCheck.TMoveSectionC.Activate := FALSE;
+								TManualCmd.TMoveCheck.TMoveSectionD.Activate := FALSE;
+								sCurrentState.eStep := SP_ManualStp1;
+						END_CASE
+					SP_ManualStp20 :  (* Init barrel axis if modules are safe*)
+						eMoveBarrelAxisCommand := AC_Home;
+						sCurrentState.eStep := SP_ManualStp21;
+					SP_ManualStp21 :  (* Turn the barrel to go to init *)
+						CASE TBarrelAxis.eCurrentState OF
+							AS_InPosition:
+								lrBarrelTargetPos := lrBarrelTakenPos;
+								eMoveBarrelAxisCommand := AC_MoveAtAbsPos;
+								sCurrentState.eStep := SP_ManualStp22;
+							AS_InError:
+								TManualCmd.TBarrelAxis.Home.Activate := FALSE;
+								sCurrentState.eStep := SP_ManualStp1;
+						END_CASE
+					SP_ManualStp22 :(* Wait until init position is reached *)
+						CASE TBarrelAxis.eCurrentState OF
+							AS_InPosition, AS_InError:
+								sCurrentState.eStep := SP_ManualStp1;
+								TManualCmd.TBarrelAxis.Home.Activate := FALSE;
+								TManualCmd.iPosition := 1;
+								iIndexPosition := 1;
+								iIndexSection := 1;
+						END_CASE
+				END_CASE
+			MS_Paused:
+				IF bStopReq THEN
+					sCurrentState.eStatus := MS_Ready;
+				END_IF
+		END_CASE;
+	MC_Init :
+		IF sCurrentState.bInitDone  THEN
+			sCurrentState.eStep := SP_InitStp99;
+		ELSE
+			sCurrentState.eStep := SP_InitStp1;
+		END_IF
+		sCurrentState.eStatus := MS_Init;
+	MC_Run :
+		sCurrentState.eStatus := MS_Running;
+	MC_Manual :
+		sCurrentState.bInitDone := FALSE;
+		sCurrentState.eStatus := MS_Manual;
+		sCurrentState.eStep := SP_ManualStp0;
+	MC_Stop :
+		sCurrentState.eStatus := MS_Stopped;
+END_CASE;
+
+IF (NOT bPowerOn) THEN
+	bMoveJackUp := FALSE;
+	bIndexTable := FALSE;
+	TManualCmd.TMoveJackUp.Activate := bMoveJackUp;
+	TManualCmd.TIndexTable.Activate := bIndexTable;
+END_IF
+
+IF bResetErrors THEN
+	sCurrentState.bInError := FALSE;
+	bCommandError := FALSE;
+END_IF
+
+(* Barrel Axis *)
+IF (sCurrentState.eStatus = MS_Manual) THEN
+	lrCurrentBarrelMoveSpeed := TBarrelAxis.lrManualSpeed;
+ELSE
+	lrCurrentBarrelMoveSpeed := TBarrelAxis.lrRunningSpeed;
+END_IF
+TBarrelAxis(
+	eCommand		:= eMoveBarrelAxisCommand,
+	lrTargetPos		:= lrBarrelTargetPos,
+	lrTargetSpeed	:= lrCurrentBarrelMoveSpeed,
+	sAxis			:= sBarrelAxisRef,
+	bResetErrors		:= bResetErrors,
+	bPowerIsOn		:= bPowerOn,
+	eHomingAxisType := AHT_OnZeroEncoder,
+	stServoButton 	:= TManualCmd.TBarrelAxis.ServoON
+);
+eMoveBarrelAxisCommand := AC_None;
+bBarrelAxisError := (TBarrelAxis.eCurrentState = AS_InError);
+
+(* Check jack error *)
+TJack(
+	bJackGoOut	:= bMoveJackUp,
+	bJackIsIn	:= bJackIsDown,
+	bJackIsOut	:= bJackIsUp,
+	bResetErrors	:= bResetErrors,
+	tTimeOut		:= t#5s,
+	bJackError	=> bJackError
+);
+
+
+(* Check table index *)
+TTableIndex(
+	bJackGoOut	:= bIndexTable,
+	bJackIsIn	:= bTableNotIndexed,
+	bJackIsOut	:= bTableIndexed,
+	bResetErrors	:= bResetErrors,
+	bJackError	=> bIndexError
+);
+
+IF NOT bEnable THEN
+	bModuleError	:= FALSE;
+	bBarrelAxisError := FALSE;
+	bJackError := FALSE;
+	bIndexError := FALSE;
+	bArea1StickWarning := FALSE;
+	bArea2StickWarning := FALSE;
+	bArea3StickWarning := FALSE;
+	bArea4StickWarning := FALSE;
+END_IF
+
+(* Timer *)
+TBarrelDetectionTimer(
+	IN	:= bStartTimer,
+	PT	:= t#150ms,
+	Q	=> ,
+	ET	=>
+);
+
+sCurrentState.bWarning := bArea1StickWarning OR bArea2StickWarning OR bArea3StickWarning OR bArea4StickWarning;
+
+IF bResetErrors THEN
+	bArea1StickWarning := FALSE;
+	bArea2StickWarning := FALSE;
+	bArea3StickWarning := FALSE;
+	bArea4StickWarning := FALSE;
+	bBarrelEmptyError := FALSE;
+END_IF
+
+IF NOT bPowerOn OR bBarrelAxisError OR bJackError OR bBarrelEmptyError OR bIndexError OR bCommandError THEN
+	sCurrentState.bInError := TRUE;
+	IF (sCurrentState.eStatus <> MS_Manual) AND (sCurrentState.eStatus <> MS_Stopped) AND (sCurrentState.eStatus <> MS_Init) THEN
+		IF bBarrelNeedScan THEN
+			sCurrentState.bInitDone := FALSE;
+			sCurrentState.eStatus := MS_Stopped;
+		ELSE
+			sCurrentState.eStatus := MS_Ready;
+		END_IF
+	END_IF
+END_IF
+
+IF NOT bPowerOn OR bBarrelAxisError OR bNewJob THEN
+	sCurrentState.bInitDone := FALSE;
+	IF (sCurrentState.eStatus <> MS_Manual) THEN
+		sCurrentState.eStatus := MS_Stopped;
+	END_IF
+END_IF
+
+sCurrentState.bInterlocked := bManInterlock AND  (sCurrentState.eStatus = MS_Manual);
+bModuleError := sCurrentState.bInError;
+sCurrentState.bRunning := (sCurrentState.eStatus = MS_Running);
+IF (sCurrentState.eStatus <> MS_Running) THEN eRunStatus := RS_NotRunning; END_IF]]></ST>
+    </Implementation>
+    <LineIds Name="BarrelHdl">
+      <LineId Id="94" Count="339" />
+      <LineId Id="877" Count="0" />
+      <LineId Id="434" Count="256" />
+      <LineId Id="971" Count="0" />
+      <LineId Id="691" Count="92" />
+    </LineIds>
+  </POU>
+</TcPlcObject>

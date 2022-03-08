@@ -1,0 +1,38 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<TcPlcObject Version="1.1.0.1" ProductVersion="3.1.4022.12">
+  <DUT Name="TRunData" Id="{8f503396-dc93-4f85-96fd-9e8bb547703a}">
+    <Declaration><![CDATA[{attribute 'pack_mode' := '1'}
+TYPE TRunData :
+STRUCT
+	sStatusBarrel			: TRunStatus;
+	sStatusLift1			: TRunStatus;
+	sStatusLift2			: TRunStatus;
+	sStatusLoader		: TRunStatus;
+	sStatusPearling		: TRunStatus;
+	sStatusReject			: TRunStatus;
+	sStatusSharpen		: TRunStatus;
+	sStatusTable			: TRunStatus;
+	sStatusTurnOver		: TRunStatus;
+	sStatusVision			: TRunStatus;
+	eCmdBarrel			: TRunCmdBarrel;
+	eCmdLift1			: TRunCmdLift;
+	eCmdLift2			: TRunCmdLift;
+	eCmdLoader			: TRunCmdLoader;
+	eCmdPearling		: TRunCmdPearling;
+	eCmdReject			: TRunCmdReject;
+	eCmdSharpen		: TRunCmdSharpen;
+	eCmdTable			: TRunCmdTable;
+	eCmdTurnOver		: TRunCmdTurnOver;
+	eCmdVision			: TRunCmdVision;
+	TDataPearling		: TRunDataPearling;
+	TDataTable			: TRunDataTable;
+	TDataTurnOver		: TRunDataTurnOver;
+	TDataLift1			: TRunDataLift;
+	TDataLift2			: TRunDataLift;
+	TDataVision			: TRunDataVision;
+	TDataReject			: TRunDataReject;
+	TDataLoader			: TRunDataLoader;
+END_STRUCT
+END_TYPE]]></Declaration>
+  </DUT>
+</TcPlcObject>

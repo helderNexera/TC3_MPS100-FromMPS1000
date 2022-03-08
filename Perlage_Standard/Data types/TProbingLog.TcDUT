@@ -1,0 +1,15 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<TcPlcObject Version="1.1.0.1" ProductVersion="3.1.4022.12">
+  <DUT Name="TProbingLog" Id="{a56bdb67-20e3-40a2-95c0-c3d9c8d0a4ba}">
+    <Declaration><![CDATA[{attribute 'pack_mode' := '1'}
+TYPE TProbingLog :
+STRUCT
+	bNewLog					: BOOL;
+	eProbingArea				: TProbingArea;
+	alrProbingPos				: ARRAY[0..1] OF LREAL;
+	iProbingThreshold				: INT;
+	iPreviousProbingThreshold		: INT;
+END_STRUCT
+END_TYPE]]></Declaration>
+  </DUT>
+</TcPlcObject>

@@ -1,0 +1,11 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<TcPlcObject Version="1.1.0.1" ProductVersion="3.1.4022.12">
+  <DUT Name="TRunCmdSharpen" Id="{c2c34ebc-86b2-401e-a9bb-2b05fb3c0de7}">
+    <Declaration><![CDATA[TYPE TRunCmdSharpen :
+	(
+		RCS_None,
+		RCS_MoveStep
+	);
+END_TYPE]]></Declaration>
+  </DUT>
+</TcPlcObject>

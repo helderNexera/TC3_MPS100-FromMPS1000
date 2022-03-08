@@ -1,0 +1,246 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<TcPlcObject Version="1.1.0.1" ProductVersion="3.1.4022.12">
+  <POU Name="HandleErrors" Id="{b64ed529-1a14-4d72-82ed-39242258be9a}" SpecialFunc="None">
+    <Declaration><![CDATA[FUNCTION_BLOCK HandleErrors
+VAR_INPUT
+	bEnable					: BOOL;
+(*	bUsingLeft				: BOOL;
+	bUsingRight				: BOOL;*)
+	abErrorsTable			: ARRAY[0..C_MAX_NB_OF_ERRORS] OF BOOL;
+END_VAR
+VAR_OUTPUT
+	bInError					: BOOL;
+	bInWarning				: BOOL;
+	iMDEAlarm				: INT;
+END_VAR
+VAR_IN_OUT
+END_VAR
+VAR
+END_VAR]]></Declaration>
+    <Implementation>
+      <ST><![CDATA[bInError :=
+	abErrorsTable[ERR_Manager]
+	OR abErrorsTable[ERR_EmergencyStop]
+	OR abErrorsTable[ERR_AirPressure]
+	OR abErrorsTable[ERR_24VPowerSupply]
+	OR abErrorsTable[ERR_48VPowerSupply]
+	OR abErrorsTable[ERR_DrivesAreOFF]
+	OR abErrorsTable[ERR_Aspiration]
+	OR abErrorsTable[ERR_LoaderAxisX]
+	OR abErrorsTable[ERR_LoaderAxisY]
+	OR abErrorsTable[ERR_LoaderAxisZ1]
+	OR abErrorsTable[ERR_LoaderAxisZ2]
+	OR abErrorsTable[ERR_LoaderAxisTheta]
+	OR abErrorsTable[ERR_LoaderHead1Vacuum]
+	OR abErrorsTable[ERR_LoaderHead2Vacuum]
+	OR abErrorsTable[ERR_LoaderJack]
+	OR abErrorsTable[ERR_LoaderPlateVacuum]
+	OR abErrorsTable[ERR_LoaderVision]
+	OR abErrorsTable[ERR_LoaderNoPartTaken]
+	OR abErrorsTable[ERR_Lift1Drv]
+	OR abErrorsTable[ERR_Lift2Drv]
+	OR abErrorsTable[ERR_BarrelAxis]
+	OR abErrorsTable[ERR_BarrelJack]
+	OR abErrorsTable[ERR_BarrelIndex]
+	OR abErrorsTable[ERR_BarrelStickNotTaken]
+	OR abErrorsTable[ERR_BarrelEmpty]
+	OR abErrorsTable[ERR_PearlingAxisX]
+	OR abErrorsTable[ERR_PearlingAxisY]
+	OR abErrorsTable[ERR_PearlingAxisZ1]
+	OR abErrorsTable[ERR_PearlingAxisZ2]
+	OR abErrorsTable[ERR_PearlingSpindle1]
+	OR abErrorsTable[ERR_PearlingSpindle2]
+	OR abErrorsTable[ERR_PearlingGripper1]
+	OR abErrorsTable[ERR_PearlingGripper2]
+	OR abErrorsTable[ERR_PearlingMCR]
+	OR abErrorsTable[ERR_PearlingSecurity]
+	OR abErrorsTable[ERR_TableAxis]
+	OR abErrorsTable[ERR_TablePearlingAspiration]
+	OR abErrorsTable[ERR_TableJack]
+	OR abErrorsTable[ERR_TablePos1Vacuum]
+	OR abErrorsTable[ERR_TablePos2Vacuum]
+	OR abErrorsTable[ERR_TablePos3Vacuum]
+	OR abErrorsTable[ERR_TablePos4Vacuum]
+	OR abErrorsTable[ERR_TableVacuum4Rotation]
+	OR abErrorsTable[ERR_PearlingMotor1]
+	OR abErrorsTable[ERR_PearlingMotor2]
+	OR abErrorsTable[ERR_PearlingCurrent1]
+	OR abErrorsTable[ERR_PearlingCurrent2]
+	OR abErrorsTable[ERR_BrushAxis]
+	OR abErrorsTable[ERR_SharpenAxis]
+	OR abErrorsTable[ERR_SharpenTape]
+	OR abErrorsTable[ERR_TurnOverAxis]
+	OR abErrorsTable[ERR_TurnOverJack]
+	OR abErrorsTable[ERR_TurnOverArmVacuum]
+	OR abErrorsTable[ERR_TurnOverFixVacuum]
+	OR abErrorsTable[ERR_VisionNotReady]
+	OR abErrorsTable[ERR_VisionNotConnected]
+	OR abErrorsTable[ERR_Vacuum]
+	OR abErrorsTable[ERR_LoaderZSensorOutOfRange]
+	OR abErrorsTable[ERR_RejectDrawerOpened]
+	OR abErrorsTable[ERR_ConfigNotUsable]
+	OR abErrorsTable[ERR_Lift1PlateLock]
+	OR abErrorsTable[ERR_Lift1DrawerLock]
+	OR abErrorsTable[ERR_Lift2PlateLock]
+	OR abErrorsTable[ERR_Lift2DrawerLock]
+	OR abErrorsTable[ERR_TableCleanBrush]
+	
+;
+
+bInWarning :=
+	abErrorsTable[W_LoaderDoorsNotClosed]
+	OR abErrorsTable[W_PearlingDoorsNotClosed]
+	OR abErrorsTable[W_NoPowerOnV1]
+	OR abErrorsTable[W_DoorsNotLocked]
+	OR abErrorsTable[W_LoaderSamplesReady]
+	OR abErrorsTable[W_RejectChangePlate]
+	OR abErrorsTable[W_Lift1NeedPlate]
+	OR abErrorsTable[W_Lift2NeedPlate]
+	OR abErrorsTable[W_Lift1DrawerNotInPos]
+	OR abErrorsTable[W_Lift2DrawerNotInPos]
+	OR abErrorsTable[W_RejectDrawerNotInPos]
+	OR abErrorsTable[W_RejectPlateNotInPos]
+	OR abErrorsTable[W_BarrelNeedArea1Stick]
+	OR abErrorsTable[W_BarrelNeedArea2Stick]
+	OR abErrorsTable[W_BarrelNeedArea3Stick]
+	OR abErrorsTable[W_BarrelNeedArea4Stick]
+	OR abErrorsTable[W_JobPurged]
+	OR abErrorsTable[W_LoaderPartsOnPlate]
+	OR abErrorsTable[W_VisionInSimulation]
+	OR abErrorsTable[W_Lift1BadPlate]
+	OR abErrorsTable[W_PearlingLeftStickBroken]
+	OR abErrorsTable[W_PearlingRightStickBroken]
+	OR abErrorsTable[W_PearlingWeight1OutOfTolerance]
+	OR abErrorsTable[W_PearlingWeight2OutOfTolerance]
+	OR abErrorsTable[W_PearlingLeftSpindleUsed]
+	OR abErrorsTable[W_PearlingRightSpindleUsed]
+	OR abErrorsTable[W_PearlingLeftMotorUsed]
+	OR abErrorsTable[W_PearlingRightMotorUsed]
+	OR abErrorsTable[W_PearlingLeftSpindleLimit]
+	OR abErrorsTable[W_PearlingRightSpindleLimit]
+	OR abErrorsTable[W_PearlingLeftSpindleHeat]
+	OR abErrorsTable[W_PearlingRightSpindleHeat]
+;
+(* Handle TMDE error status *)
+IF bInError THEN
+	(* Update alarm status only if not already set *)
+	IF (iMDEAlarm = 2900) OR (iMDEAlarm = 0) THEN
+		(* Define code depending on alarm *)
+		IF abErrorsTable[ERR_ConfigNotUsable]
+				OR abErrorsTable[ERR_Aspiration]
+				OR abErrorsTable[ERR_VisionNotReady]
+				OR abErrorsTable[ERR_VisionNotConnected]
+			THEN
+			iMDEAlarm := 2010; 		(* General alarm*)
+		ELSIF abErrorsTable[ERR_24VPowerSupply]
+				OR abErrorsTable[ERR_48VPowerSupply]
+				OR abErrorsTable[ERR_DrivesAreOFF]  THEN
+			iMDEAlarm := 2020; 		(* Electrial alarm*)
+		ELSIF abErrorsTable[ERR_LoaderAxisX]
+				OR abErrorsTable[ERR_LoaderAxisY]
+				OR abErrorsTable[ERR_LoaderAxisZ1]
+				OR abErrorsTable[ERR_LoaderAxisZ2]
+				OR abErrorsTable[ERR_LoaderAxisTheta]
+				OR abErrorsTable[ERR_Lift1Drv]
+				OR abErrorsTable[ERR_Lift2Drv]
+				OR abErrorsTable[ERR_PearlingAxisX]
+				OR abErrorsTable[ERR_PearlingAxisY]
+				OR abErrorsTable[ERR_PearlingAxisZ1]
+				OR abErrorsTable[ERR_PearlingAxisZ2]
+				OR abErrorsTable[ERR_BarrelAxis]
+				OR abErrorsTable[ERR_TableAxis]
+				OR abErrorsTable[ERR_SharpenAxis]
+				OR abErrorsTable[ERR_TurnOverAxis]
+				OR abErrorsTable[ERR_BrushAxis]
+				THEN
+			iMDEAlarm := 2021; 		(* Motor alarm*)
+		ELSIF abErrorsTable[ERR_RejectDrawerOpened]
+				OR abErrorsTable[ERR_PearlingSecurity]
+				OR abErrorsTable[ERR_TablePearlingAspiration]
+				OR abErrorsTable[ERR_TableJack]
+				OR abErrorsTable[ERR_BarrelJack]
+				OR abErrorsTable[ERR_BarrelIndex]
+				OR abErrorsTable[ERR_TurnOverJack]
+				OR abErrorsTable[ERR_LoaderZSensorOutOfRange]
+				OR abErrorsTable[ERR_LoaderJack]
+				OR abErrorsTable[ERR_Lift1PlateLock]
+				OR abErrorsTable[ERR_Lift1DrawerLock]
+				OR abErrorsTable[ERR_Lift2PlateLock]
+				OR abErrorsTable[ERR_Lift2DrawerLock]
+				OR abErrorsTable[ERR_TableCleanBrush]
+				THEN
+			iMDEAlarm := 2040; 		(* Machine security alarm*)
+		ELSIF abErrorsTable[ERR_EmergencyStop]
+				THEN
+			iMDEAlarm := 2050; 		(* Human security alarm*)
+		ELSIF abErrorsTable[ERR_PearlingMCR]
+				OR abErrorsTable[ERR_PearlingGripper1]
+				OR abErrorsTable[ERR_PearlingGripper2]
+				OR abErrorsTable[ERR_PearlingSpindle1]
+				OR abErrorsTable[ERR_PearlingSpindle2]
+				OR abErrorsTable[ERR_SharpenTape]
+				THEN
+			iMDEAlarm := 2060; 		(* General tool alarm*)
+		ELSIF	abErrorsTable[ERR_AirPressure]
+				THEN
+			iMDEAlarm := 2070; 		(* Pneumatics alarm*)
+		ELSIF FALSE THEN
+			iMDEAlarm := 2100; 		(* Power down alarm*)
+		ELSIF FALSE THEN
+			iMDEAlarm := 2101; 		(* Init alarm*)
+		ELSIF FALSE THEN
+			iMDEAlarm := 2102; 		(* Warming alarm*)
+		ELSIF FALSE THEN
+			iMDEAlarm := 2103; 		(* Ready for prod alarm*)
+		ELSIF abErrorsTable[ERR_BarrelEmpty] THEN
+			iMDEAlarm := 2110; 		(* Material supply alarm*)
+		ELSIF FALSE THEN
+			iMDEAlarm := 2121; 		(* NbOfParts reached alarm*)
+		ELSIF abErrorsTable[ERR_LoaderHead1Vacuum]
+				OR abErrorsTable[ERR_LoaderHead2Vacuum]
+				OR abErrorsTable[ERR_TablePos1Vacuum]
+				OR abErrorsTable[ERR_TablePos2Vacuum]
+				OR abErrorsTable[ERR_TablePos3Vacuum]
+				OR abErrorsTable[ERR_TablePos4Vacuum]
+				OR abErrorsTable[ERR_TurnOverArmVacuum]
+				OR abErrorsTable[ERR_TurnOverFixVacuum]
+				OR abErrorsTable[ERR_TableVacuum4Rotation]
+				OR abErrorsTable[ERR_PearlingMotor1]
+				OR abErrorsTable[ERR_PearlingMotor2]
+				OR abErrorsTable[ERR_PearlingCurrent1]
+				OR abErrorsTable[ERR_PearlingCurrent2]
+				OR abErrorsTable[ERR_BarrelStickNotTaken]
+				OR abErrorsTable[ERR_LoaderPlateVacuum]
+				OR abErrorsTable[ERR_Vacuum]
+				THEN
+			iMDEAlarm := 2200; 		(* Process alarm*)
+		ELSIF FALSE THEN
+			iMDEAlarm := 2312; 		(* Tools alarm*)
+		ELSE
+			iMDEAlarm := 2010; 		(* By default general alarm*)
+		END_IF
+	END_IF
+ELSIF binWarning THEN
+	iMDEAlarm := 2900;
+ELSE
+	iMDEAlarm := 0;
+END_IF]]></ST>
+    </Implementation>
+    <LineIds Name="HandleErrors">
+      <LineId Id="16" Count="60" />
+      <LineId Id="240" Count="0" />
+      <LineId Id="242" Count="2" />
+      <LineId Id="250" Count="0" />
+      <LineId Id="241" Count="0" />
+      <LineId Id="77" Count="30" />
+      <LineId Id="223" Count="0" />
+      <LineId Id="266" Count="1" />
+      <LineId Id="224" Count="0" />
+      <LineId Id="108" Count="42" />
+      <LineId Id="245" Count="3" />
+      <LineId Id="151" Count="0" />
+      <LineId Id="249" Count="0" />
+      <LineId Id="152" Count="55" />
+    </LineIds>
+  </POU>
+</TcPlcObject>

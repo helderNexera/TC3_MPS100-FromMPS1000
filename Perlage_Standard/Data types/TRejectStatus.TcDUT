@@ -1,0 +1,13 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<TcPlcObject Version="1.1.0.1" ProductVersion="3.1.4022.12">
+  <DUT Name="TRejectStatus" Id="{122ce9b9-e4bf-4112-bb49-5aba618ba582}">
+    <Declaration><![CDATA[TYPE TRejectStatus :
+	(
+		RS_Ready := 0,
+		RS_Locked,
+		RS_Empty,
+		RS_OpenDrawer
+	);
+END_TYPE]]></Declaration>
+  </DUT>
+</TcPlcObject>

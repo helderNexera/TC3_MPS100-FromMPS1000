@@ -1,0 +1,11 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<TcPlcObject Version="1.1.0.1" ProductVersion="3.1.4022.12">
+  <DUT Name="TPearlingData" Id="{3e71056a-c357-4e59-acec-29f9ff3cbba3}">
+    <Declaration><![CDATA[{attribute 'pack_mode' := '1'}
+TYPE TPearlingData :
+STRUCT
+		THead 	: ARRAY[PH_Left..PH_Right] OF TPearlingDataHead;
+END_STRUCT
+END_TYPE]]></Declaration>
+  </DUT>
+</TcPlcObject>

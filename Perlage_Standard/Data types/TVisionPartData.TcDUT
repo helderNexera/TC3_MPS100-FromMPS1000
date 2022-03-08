@@ -1,0 +1,17 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<TcPlcObject Version="1.1.0.1" ProductVersion="3.1.4022.12">
+  <DUT Name="TVisionPartData" Id="{60b7070f-cea5-4ff7-afee-c0461561b203}">
+    <Declaration><![CDATA[{attribute 'pack_mode' := '1'}
+TYPE TVisionPartData :
+	STRUCT
+		lrX				: LREAL;
+		lrY				: LREAL;
+		lrTheta			: LREAL;
+		lrScore			: LREAL;
+		bValid			: BOOL;
+		bPresent			: BOOL;
+		bImageGrabbed	: BOOL;
+	END_STRUCT
+END_TYPE]]></Declaration>
+  </DUT>
+</TcPlcObject>

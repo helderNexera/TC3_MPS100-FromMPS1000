@@ -1,0 +1,25 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<TcPlcObject Version="1.1.0.1" ProductVersion="3.1.4022.18">
+  <DUT Name="TVisionData" Id="{cb0ef373-4a4a-4553-bd3c-8aa10f89acda}">
+    <Declaration><![CDATA[{attribute 'pack_mode' := '1'}
+TYPE TVisionData :
+	STRUCT
+		eRequest			: TVisionRequest;
+		bRequestDone		: BOOL;
+		bRequestError		: BOOL;
+		iMajorVersion		: INT;
+		iMinorVersion		: INT;
+		bAlive				: BOOL;
+		bConnected			: BOOL;
+		acRefFileName		: STRING(20);
+		TPartData			: TVisionPartData;
+		bReady				: BOOL;
+		bSimRecipe			: BOOL;
+		iUseModel			: INT;
+		iMaxModel			: INT;
+		bMondemaMode		: BOOL;
+		bConfigMode			: BOOL;
+	END_STRUCT
+END_TYPE]]></Declaration>
+  </DUT>
+</TcPlcObject>

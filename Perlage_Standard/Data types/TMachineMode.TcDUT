@@ -1,0 +1,19 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<TcPlcObject Version="1.1.0.1" ProductVersion="3.1.4022.12">
+  <DUT Name="TMachineMode" Id="{f4ae6ffa-454a-478d-a52e-3f1e3c730838}">
+    <Declaration><![CDATA[TYPE TMachineMode :
+	(	MM_Stopped:=0,
+		MM_Init,
+		MM_Ready,
+		MM_Running,
+		MM_Dashboard,
+		MM_Stopping,
+		MM_Manual,
+		MM_Pause,
+		MM_Pausing,
+		MM_ForceStop,
+		MM_Purging
+	);
+END_TYPE]]></Declaration>
+  </DUT>
+</TcPlcObject>

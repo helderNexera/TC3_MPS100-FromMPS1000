@@ -1,0 +1,363 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<TcPlcObject Version="1.1.0.1" ProductVersion="3.1.4022.12">
+  <POU Name="UtilitiesHdl" Id="{70c19cbc-7bf1-479c-97e7-d198c6a77c81}" SpecialFunc="None">
+    <Declaration><![CDATA[FUNCTION_BLOCK UtilitiesHdl
+(*
+	Description 	: Bloc fonction de gestion des Utilities
+	Auteur		: DRE
+	Date		: 06.09.2016
+	Version		: 1.00
+
+	Modifications :
+
+*)
+
+VAR_INPUT
+	bEnable						: BOOL;
+	bDrivesAreOFF				: BOOL;
+	b24VOK						: BOOL;
+	b48VOK						: BOOL;
+	bAirPressureOK				: BOOL;
+	bVacuumPumpIsOn			: BOOL;
+	bMainVacuumOK				: BOOL;
+	bAspirationIsOn				: BOOL;
+	bAspirationOK				: BOOL;
+	bPowerOn					: BOOL;
+	bResetErrors					: BOOL;
+	bStopReq					: BOOL;
+	bPauseReq					: BOOL;
+	eCommand					: TModuleCommands;
+	bTableAspiration13On			: BOOL;
+	bTableAspiration24On			: BOOL;
+	bLoaderBrushAspirationOn		: BOOL;
+	bBrushAspirationOn			: BOOL;
+	bSharpenAspirationOn			: BOOL;
+	bLoaderVacuumInUse			: BOOL;
+END_VAR
+VAR_OUTPUT
+	bModuleError					: BOOL;
+	bVacuumPumpOn				: BOOL;
+	bAspirationOn				: BOOL;
+	bVacuumError				: BOOL;
+	bAspirationError				: BOOL;
+	bAirPressureError				: BOOL;
+	b24VError					: BOOL;
+	b48VError					: BOOL;
+	bPowerError					: BOOL;
+	bDrivePowerError				: BOOL;
+	bTableAspiration13Vacuum		: BOOL;
+	bTableAspiration13Blowing		: BOOL;
+	bTableAspiration24Vacuum		: BOOL;
+	bTableAspiration24Blowing		: BOOL;
+	bLoaderBrushAspirationVacuum	: BOOL;
+	bLoaderBrushAspirationBlowing	: BOOL;
+	bBrushAspirationVacuum		: BOOL;
+	bBrushAspirationBlowing		: BOOL;
+	bSharpenAspirationVacuum	: BOOL;
+	bSharpenAspirationBlowing		: BOOL;
+	dwAspirationUseTime			: DWORD;
+	dwVacuumUseTime			: DWORD;
+END_VAR
+VAR_IN_OUT
+	sCurrentState					: TModuleData;
+	TManualCmd					: TManUtilities;
+END_VAR
+VAR
+	TPumpCheckTimer				: TON;
+	TSupplyFilter				: TON;
+	TVacuumOnTimer				: TON;
+	TVacuumOffTimer				: TON;
+	TVacuumOk					: TOF;
+	TVacuumCounter				: RunningCounter;
+	TAspirationCounter			: RunningCounter;
+
+	TTableAspiration13			: FB_AspirationValve;
+	TTableAspiration24			: FB_AspirationValve;
+	TLoaderBrushAspiration		: FB_AspirationValve;
+	TBrushAspiration				: FB_AspirationValve;
+	TSharpenAspiration			: FB_AspirationValve;
+
+	bLastLoaderVacuumUse		: BOOL;
+	TShutdownVacuum				: TON;
+	
+	iDebug						: INT := 0;
+
+END_VAR]]></Declaration>
+    <Implementation>
+      <ST><![CDATA[IF (NOT sCurrentState.bStepMode) THEN
+	sCurrentState.bWaitStep := FALSE;
+END_IF
+
+IF sCurrentState.eStatus<>MS_Stopped AND sCurrentState.eStatus<>MS_Ready THEN
+	TVacuumOffTimer(IN := FALSE);
+END_IF
+
+TVacuumOk(IN := bMainVacuumOK, PT := t#5s);
+TVacuumOnTimer(IN := bVacuumPumpOn, PT := t#10s);
+
+CASE eCommand OF+
+	MC_NoCmd :
+		CASE sCurrentState.eStatus OF
+			MS_Init :
+				IF bEnable THEN
+				CASE sCurrentState.eStep OF
+					SP_InitStp1 : (* Start Pumps*)
+						bVacuumPumpOn := TRUE;
+						bAspirationOn := TRUE;
+						TPumpCheckTimer(
+							IN	:= FALSE
+						);
+						iDebug := 1;
+						sCurrentState.eStep := SP_InitStp2;
+					SP_InitStp2:
+						TPumpCheckTimer(
+							IN	:= TRUE,
+							PT	:= t#20s,
+						);
+						IF bVacuumPumpIsOn AND bAspirationIsOn AND bAspirationOK THEN
+							TPumpCheckTimer(
+								IN	:= FALSE,
+							);
+							iDebug := 2;
+							sCurrentState.eStep := SP_InitStp3;
+						ELSIF TPumpCheckTimer.Q THEN
+							IF NOT bVacuumPumpIsOn THEN 
+								bVacuumError := TRUE; 
+								iDebug := 3;
+							END_IF
+							IF NOT bAspirationIsOn THEN 
+								bAspirationError := TRUE;
+								iDebug := 4;
+							END_IF
+						END_IF
+					SP_InitStp3:
+						TPumpCheckTimer(
+							IN	:= TRUE,
+							PT	:= T#20S,
+						);
+						IF (bMainVacuumOK) THEN
+							TPumpCheckTimer(
+								IN	:= FALSE,
+							);
+							iDebug := 5;
+							sCurrentState.eStep := SP_InitStp99;
+						ELSIF TPumpCheckTimer.Q OR NOT bVacuumPumpIsOn THEN
+							bVacuumError := TRUE;
+							iDebug := 6;
+						END_IF
+						IF NOT bAspirationIsOn OR NOT bAspirationOK THEN
+							bAspirationError := TRUE;
+							iDebug := 7;
+						END_IF
+					SP_InitStp99 : (* Leave Init *)
+						sCurrentState.eStep := SP_RunStp1;
+						sCurrentState.eStatus := MS_Ready;
+						sCurrentState.bInitDone := TRUE;
+				END_CASE
+				ELSE
+					sCurrentState.eStatus := MS_Ready;
+					sCurrentState.bInitDone := TRUE;
+				END_IF
+			MS_Running :
+				IF bEnable AND  (NOT sCurrentState.bWaitStep) THEN
+					CASE sCurrentState.eStep OF
+						SP_RunStp1:
+							IF bStopReq THEN
+								sCurrentState.eStatus := MS_Ready;
+							ELSIF bPauseReq THEN
+								sCurrentState.eStatus := MS_Paused;
+							ELSE
+								bVacuumPumpOn := TRUE;
+								bAspirationOn := TRUE;
+								IF TVacuumOnTimer.Q THEN
+									IF NOT bVacuumPumpIsOn OR NOT TVacuumOk.Q THEN
+										bVacuumError := TRUE;
+									END_IF
+									IF NOT bAspirationIsOn OR NOT bAspirationOK THEN
+										bAspirationError := TRUE;
+									END_IF
+								END_IF
+							END_IF
+					END_CASE
+				END_IF
+			MS_Manual :
+				TManualCmd.b24VOK := b24VOK;
+				TManualCmd.b48VOK := b48VOK;
+				TManualCmd.bAirPressureOK := bAirPressureOK;
+				TManualCmd.bDrivesIsOn := NOT bDrivesAreOFF;
+				TManualCmd.bMainVacuumOK := bMainVacuumOK;
+				TManualCmd.bAspirationOK := bAspirationOK;
+				TManualCmd.bAspirationIsOn := bAspirationIsOn;
+				TManualCmd.bPowerIsOn := bPowerOn;
+				TManualCmd.TAspiration.Enable := TRUE;
+				TManualCmd.TVacuum.Enable := TRUE;
+				TManualCmd.TResetAspirationUseTime.Enable := TRUE;
+				TManualCmd.TResetVacuumUseTime.Enable := TRUE;
+				TManualCmd.dwAspirationUseTime := TAspirationCounter.dwHours;
+				TManualCmd.dwVacuumUseTime := TVacuumCounter.dwHours;
+				CASE sCurrentState.eStep OF
+					SP_ManualStp0 :
+						TManualCmd.TAspiration.Activate := bAspirationOn;
+						TManualCmd.TVacuum.Activate := bVacuumPumpOn;
+						TManualCmd.TResetAspirationUseTime.Activate := FALSE;
+						TManualCmd.TResetVacuumUseTime.Activate := FALSE;
+						sCurrentState.eStep := SP_ManualStp1;
+					SP_ManualStp1:
+						IF bStopReq THEN
+							sCurrentState.eStatus := MS_Stopped;
+						END_IF
+						bAspirationOn := TManualCmd.TAspiration.Activate;
+						bVacuumPumpOn := TManualCmd.TVacuum.Activate;
+						IF (TManualCmd.TResetAspirationUseTime.Activate) THEN
+							TAspirationCounter(bReset := TRUE);
+							TManualCmd.TResetAspirationUseTime.Activate := FALSE;
+						END_IF
+						IF (TManualCmd.TResetVacuumUseTime.Activate) THEN
+							TVacuumCounter(bReset := TRUE);
+							TManualCmd.TResetVacuumUseTime.Activate := FALSE;
+						END_IF
+				END_CASE
+		MS_Paused:
+			IF bStopReq THEN
+				sCurrentState.eStatus := MS_Ready;
+			END_IF
+		MS_Stopped:
+			TVacuumOffTimer(IN:=bVacuumPumpOn AND NOT bLoaderVacuumInUse, PT := t#30s);
+			IF TVacuumOffTimer.Q AND NOT bLoaderVacuumInUse THEN
+				bVacuumPumpOn := FALSE;
+				bAspirationOn := FALSE;
+				sCurrentState.bInitDone := FALSE;
+			END_IF
+		END_CASE;
+	MC_Init :
+		sCurrentState.eStep := SP_InitStp1;
+(*		IF sCurrentState.bInitDone THEN
+			sCurrentState.eStep := SP_InitStp99;
+		ELSE
+			sCurrentState.eStep := SP_InitStp1;
+		END_IF
+*)		sCurrentState.eStatus := MS_Init;
+	MC_Run :
+		sCurrentState.eStatus := MS_Running;
+	MC_Manual :
+		sCurrentState.bInitDone := FALSE;
+		sCurrentState.eStatus := MS_Manual;
+		sCurrentState.eStep := SP_ManualStp0;
+	MC_Stop :
+		sCurrentState.eStatus := MS_Stopped;
+END_CASE;
+
+IF NOT bEnable THEN
+	bModuleError	:= FALSE;
+END_IF
+
+TSupplyFilter(IN := NOT bResetErrors, PT := t#500ms);
+IF TSupplyFilter.Q THEN
+	IF NOT b24VOK 			THEN b24VError := TRUE; END_IF
+	IF NOT b48VOK 			THEN b48VError := TRUE; END_IF
+	IF bDrivesAreOFF 			THEN bDrivePowerError := TRUE; END_IF
+	IF NOT bPowerOn 		THEN bPowerError := TRUE; END_IF
+END_IF
+IF NOT bAirPressureOK	 THEN bAirPressureError := TRUE; END_IF
+
+TVacuumCounter(bStart := bVacuumPumpIsOn, bReset := FALSE);
+TAspirationCounter(bStart := bAspirationIsOn, bReset := FALSE);
+dwAspirationUseTime := TAspirationCounter.dwHours;
+dwVacuumUseTime := TVacuumCounter.dwHours;
+
+
+(*IF bAspirationOn OR bAspirationIsOn THEN*)
+	(* Force at least 1 aspiration open *)
+	bTableAspiration13On := bTableAspiration13On OR NOT (bTableAspiration24On OR bLoaderBrushAspirationOn OR bBrushAspirationOn OR bSharpenAspirationOn);
+(*END_IF*)
+
+TTableAspiration13(
+	bEnableAspiration := bTableAspiration13On,
+	bVacuumOn		=> bTableAspiration13Vacuum,
+	bBlowOn			=> bTableAspiration13Blowing
+);
+TTableAspiration24(
+	bEnableAspiration := bTableAspiration24On,
+	bVacuumOn		=> bTableAspiration24Vacuum,
+	bBlowOn			=> bTableAspiration24Blowing
+);
+TLoaderBrushAspiration(
+	bEnableAspiration := bLoaderBrushAspirationOn,
+	bVacuumOn		=> bLoaderBrushAspirationVacuum,
+	bBlowOn			=> bLoaderBrushAspirationBlowing
+);
+TBrushAspiration(
+	bEnableAspiration := bBrushAspirationOn,
+	bVacuumOn		=> bBrushAspirationVacuum,
+	bBlowOn			=> bBrushAspirationBlowing
+);
+TSharpenAspiration(
+	bEnableAspiration := bSharpenAspirationOn,
+	bVacuumOn		=> bSharpenAspirationVacuum,
+	bBlowOn			=> bSharpenAspirationBlowing
+);
+
+IF bResetErrors THEN
+	sCurrentState.bInError := FALSE;
+	bVacuumError := FALSE;
+	bAspirationError := FALSE;
+	bAirPressureError := FALSE;
+	b24VError := FALSE;
+	b48VError := FALSE;
+	bPowerError := FALSE;
+	bDrivePowerError := FALSE;
+END_IF
+
+IF NOT bPowerOn OR bDrivesAreOFF OR NOT b24VOK OR NOT b48VOK OR NOT bAirPressureOK OR bVacuumError OR bAspirationError THEN
+	sCurrentState.bInError := TRUE;
+		IF (sCurrentState.eStatus <> MS_Manual) AND (sCurrentState.eStatus <> MS_Stopped) AND (sCurrentState.eStatus <> MS_Init) THEN
+		sCurrentState.eStatus := MS_Ready;
+	END_IF
+END_IF
+
+IF (NOT bPowerOn OR bVacuumError OR bAspirationError) THEN
+	sCurrentState.bInitDone := FALSE;
+	IF (sCurrentState.eStatus <> MS_Manual) THEN
+		sCurrentState.eStatus := MS_Stopped;
+	END_IF
+END_IF
+
+
+bModuleError := sCurrentState.bInError;
+
+sCurrentState.bRunning := (sCurrentState.eStatus = MS_Running);
+
+(* Force vacuum pump off if no vacuum on head for 1 hour *)
+TShutdownVacuum(IN:=bVacuumPumpOn AND (bLoaderVacuumInUse = bLastLoaderVacuumUse), PT := t#60m);
+bLastLoaderVacuumUse := bLoaderVacuumInUse;
+IF TShutdownVacuum.Q THEN
+	bVacuumPumpOn := FALSE;
+	bAspirationOn := FALSE;
+	sCurrentState.bInitDone := FALSE;
+	sCurrentState.eStatus := MS_Stopped;
+END_IF
+]]></ST>
+    </Implementation>
+    <LineIds Name="UtilitiesHdl">
+      <LineId Id="80" Count="22" />
+      <LineId Id="403" Count="0" />
+      <LineId Id="103" Count="9" />
+      <LineId Id="405" Count="0" />
+      <LineId Id="113" Count="2" />
+      <LineId Id="406" Count="0" />
+      <LineId Id="411" Count="0" />
+      <LineId Id="407" Count="0" />
+      <LineId Id="116" Count="0" />
+      <LineId Id="408" Count="0" />
+      <LineId Id="410" Count="0" />
+      <LineId Id="409" Count="0" />
+      <LineId Id="117" Count="9" />
+      <LineId Id="412" Count="0" />
+      <LineId Id="127" Count="2" />
+      <LineId Id="413" Count="0" />
+      <LineId Id="130" Count="2" />
+      <LineId Id="414" Count="0" />
+      <LineId Id="133" Count="188" />
+    </LineIds>
+  </POU>
+</TcPlcObject>

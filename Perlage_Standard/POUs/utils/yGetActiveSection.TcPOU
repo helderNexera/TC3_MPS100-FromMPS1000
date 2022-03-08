@@ -1,0 +1,31 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<TcPlcObject Version="1.1.0.1" ProductVersion="3.1.4022.12">
+  <POU Name="yGetActiveSection" Id="{84f81a9d-340f-487e-b243-5f2b1027cd08}" SpecialFunc="None">
+    <Declaration><![CDATA[FUNCTION yGetActiveSection : BYTE
+VAR_IN_OUT
+	yActiveSections		: BYTE;
+END_VAR
+VAR
+	ySectionChecked		: BYTE;
+END_VAR]]></Declaration>
+    <Implementation>
+      <ST><![CDATA[yGetActiveSection := 0;
+WHILE TRUE DO
+	ySectionChecked := LREAL_TO_BYTE(EXPT(2,yGetActiveSection));
+	yGetActiveSection := yGetActiveSection + 1;
+	IF (yActiveSections AND ySectionChecked) > 0 THEN
+		(* Section found *)
+		yActiveSections := yActiveSections - (yActiveSections AND ySectionChecked);
+		EXIT;
+	ELSIF yActiveSections = 0 THEN
+		yGetActiveSection := 0;
+		EXIT;
+	END_IF
+END_WHILE;
+]]></ST>
+    </Implementation>
+    <LineIds Name="yGetActiveSection">
+      <LineId Id="7" Count="13" />
+    </LineIds>
+  </POU>
+</TcPlcObject>

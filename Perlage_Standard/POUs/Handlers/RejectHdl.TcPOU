@@ -1,0 +1,222 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<TcPlcObject Version="1.1.0.1" ProductVersion="3.1.4022.12">
+  <POU Name="RejectHdl" Id="{f2c38519-dc5d-495c-b56a-2c5aaf8024df}" SpecialFunc="None">
+    <Declaration><![CDATA[FUNCTION_BLOCK RejectHdl
+(*
+	Description 	: Bloc fonction de gestion du rejet
+	Auteur		: DRE
+	Date		: 06.09.2016
+	Version		: 1.00
+
+	Modifications :
+
+*)
+
+VAR_INPUT
+	bEnable						: BOOL;
+	bDrawerInPos				: BOOL;
+	bPlateInPos					: BOOL;
+	bPowerOn					: BOOL;
+	bResetErrors					: BOOL;
+	bStopReq					: BOOL;
+	bPauseReq					: BOOL;
+	eCommand					: TModuleCommands;
+	eRunCommand				: TRunCmdReject;
+	bWaitingForPlates				: BOOL;
+END_VAR
+VAR_OUTPUT
+	bModuleError					: BOOL;
+	bDrawerIsOpen				: BOOL;
+	bDrawerOpenedError			: BOOL;
+	bNoPlatePresent				: BOOL;
+	bRejectBlueLight				: BOOL;
+	eRunStatus					: TRunStatus;
+	sRunData					: TRunDataReject;
+	bNewPlate					: BOOL;
+END_VAR
+VAR_IN_OUT
+	sCurrentState					: TModuleData;
+	TManualCmd					: TManReject;
+END_VAR
+VAR
+	TCloseTimer					: TON;
+	bPlateReady					: BOOL;
+	bLastPlateReady				: BOOL;
+END_VAR
+VAR PERSISTENT
+	RejectPlateNb				:DWORD;
+END_VAR]]></Declaration>
+    <Implementation>
+      <ST><![CDATA[IF (NOT sCurrentState.bStepMode) THEN
+	sCurrentState.bWaitStep := FALSE;
+END_IF
+
+CASE eCommand OF
+	MC_NoCmd :
+		CASE sCurrentState.eStatus OF
+			MS_Init :
+				IF bEnable THEN
+				CASE sCurrentState.eStep OF
+					SP_InitStp1 : (* Init all synchros *)
+						bRejectBlueLight := TRUE;
+						sCurrentState.eStep := SP_InitStp99;
+					SP_InitStp99 : (* Leave Init *)
+						sCurrentState.eStep := SP_RunStp1;
+						sCurrentState.eStatus := MS_Ready;
+						sCurrentState.bInitDone := TRUE;
+				END_CASE
+				ELSE
+					sCurrentState.eStatus := MS_Ready;
+					sCurrentState.bInitDone := TRUE;
+				END_IF
+			MS_Running :
+				IF bEnable AND  (NOT sCurrentState.bWaitStep) THEN
+					CASE sCurrentState.eStep OF
+						SP_RunStp1 :(* Wait request *)
+							eRunStatus := RS_WaitRequest;
+							CASE eRunCommand OF
+								RCR_None:
+									IF bStopReq  THEN
+										sCurrentState.eStatus := MS_Ready;
+									ELSIF bPauseReq  THEN
+										sCurrentState.eStatus := MS_Paused;
+									ELSIF NOT bDrawerInPos OR NOT bPlateInPos THEN
+										sCurrentState.eStep := SP_RunStp10;
+									END_IF
+								RCR_OpenDrawer:
+									sCurrentState.eStep := SP_RunStp10;
+								RCR_LockDrawer:
+									IF bDrawerInPos AND bPlateInPos THEN
+										bRejectBlueLight := FALSE;
+									END_IF
+									sCurrentState.eStep := SP_RunStp1;
+								RCR_UnlockDrawer:
+									bRejectBlueLight := TRUE;
+									sCurrentState.eStep := SP_RunStp1;
+							END_CASE
+							IF sCurrentState.eStep<> SP_RunStp1 THEN
+								IF NOT bRejectBlueLight THEN
+									bDrawerOpenedError := TRUE;
+								END_IF
+								sRunData.eRejectStatus := RS_OpenDrawer;
+								eRunStatus := RS_ProcessRequest1;
+							ELSE
+								IF NOT bRejectBlueLight AND bDrawerInPos AND bPlateInPos THEN
+									sRunData.eRejectStatus := RS_Locked;
+								ELSIF bDrawerInPos AND bPlateInPos THEN
+									sRunData.eRejectStatus := RS_Ready;
+								ELSE
+									sRunData.eRejectStatus := RS_Empty;
+								END_IF
+							END_IF
+						SP_RunStp10 :  (* Operator open drawer *)
+							IF bStopReq  THEN
+								sCurrentState.eStatus := MS_Ready;
+							ELSIF bPauseReq THEN
+								sCurrentState.eStatus := MS_Paused;
+							END_IF
+							bRejectBlueLight := TRUE;
+							IF bDrawerInPos AND bPlateInPos THEN
+								TCloseTimer(IN := FALSE);
+								sCurrentState.eStep := SP_RunStp11;
+							END_IF
+;						SP_RunStp11 :  (* Operator close drawer *)
+							IF bStopReq  THEN
+								sCurrentState.eStatus := MS_Ready;
+							ELSIF bPauseReq THEN
+								sCurrentState.eStatus := MS_Paused;
+							END_IF
+							TCloseTimer(IN := bDrawerInPos AND NOT bWaitingForPlates, PT := t#2s);
+							IF TCloseTimer.Q THEN
+								sCurrentState.eStep := SP_RunStp1;
+							END_IF
+					END_CASE
+				END_IF
+			MS_Manual :
+				TManualCmd.bDrawerInPos := bDrawerInPos;
+				TManualCmd.bPlateInPos := bPlateInPos;
+				bRejectBlueLight :=  TRUE;
+				IF bStopReq THEN
+					sCurrentState.eStatus := MS_Stopped;
+				END_IF
+			MS_Paused:
+				IF bStopReq THEN
+					sCurrentState.eStatus := MS_Ready;
+				END_IF
+			MS_Stopped:
+				bRejectBlueLight :=  TRUE;
+		END_CASE;
+	MC_Init :
+		IF sCurrentState.bInitDone THEN
+			sCurrentState.eStep := SP_InitStp99;
+		ELSE
+			sCurrentState.eStep := SP_InitStp1;
+		END_IF
+		sCurrentState.eStatus := MS_Init;
+	MC_Run :
+		sCurrentState.eStatus := MS_Running;
+	MC_Manual :
+		sCurrentState.bInitDone := FALSE;
+		sCurrentState.eStatus := MS_Manual;
+		sCurrentState.eStep := SP_ManualStp0;
+	MC_Stop :
+		sCurrentState.eStatus := MS_Stopped;
+END_CASE;
+
+bNoPlatePresent := NOT bPlateInPos;
+
+IF bResetErrors THEN
+	bDrawerOpenedError := FALSE;
+	bNoPlatePresent := FALSE;
+	sCurrentState.bInError := FALSE;
+END_IF
+
+IF NOT bEnable THEN
+	bModuleError	:= FALSE;
+END_IF
+
+bNewPlate := FALSE;
+bPlateReady := bDrawerInPos AND bPlateInPos;
+IF bPlateReady <> bLastPlateReady THEN
+	bLastPlateReady := bPlateReady;
+	IF NOT bPlateReady THEN
+		bNewPlate := TRUE;
+		RejectPlateNb := RejectPlateNb + 1;
+	END_IF
+END_IF
+bDrawerIsOpen := NOT bDrawerInPos;
+sCurrentState.bWarning := bDrawerIsOpen OR bNoPlatePresent OR bRejectBlueLight OR bWaitingForPlates;
+
+(*
+IF bResetErrors THEN
+	Nothing to do
+END_IF
+*)
+IF bDrawerOpenedError THEN
+	sCurrentState.bInError := TRUE;
+	IF (sCurrentState.eStatus <> MS_Manual) AND (sCurrentState.eStatus <> MS_Stopped) AND (sCurrentState.eStatus <> MS_Init) THEN
+		sCurrentState.eStatus := MS_Ready;
+	END_IF
+END_IF
+
+bModuleError := sCurrentState.bInError;
+
+sCurrentState.bRunning := (sCurrentState.eStatus = MS_Running);
+IF (sCurrentState.eStatus <> MS_Running) THEN
+	sRunData.eRejectStatus := RS_OpenDrawer;
+	eRunStatus := RS_NotRunning;
+END_IF
+
+]]></ST>
+    </Implementation>
+    <LineIds Name="RejectHdl">
+      <LineId Id="45" Count="114" />
+      <LineId Id="248" Count="0" />
+      <LineId Id="160" Count="0" />
+      <LineId Id="249" Count="0" />
+      <LineId Id="161" Count="1" />
+      <LineId Id="247" Count="0" />
+      <LineId Id="163" Count="39" />
+    </LineIds>
+  </POU>
+</TcPlcObject>

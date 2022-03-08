@@ -1,0 +1,12 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<TcPlcObject Version="1.1.0.1" ProductVersion="3.1.4022.12">
+  <DUT Name="TRunCmdVision" Id="{e4dc9c82-8169-4025-a240-b00cfda54436}">
+    <Declaration><![CDATA[TYPE TRunCmdVision :
+	(
+		RCV_None,
+		RCV_GrabImage,
+		RCV_AnalyseImage
+	);
+END_TYPE]]></Declaration>
+  </DUT>
+</TcPlcObject>

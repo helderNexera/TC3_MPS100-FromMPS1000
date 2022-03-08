@@ -1,0 +1,11 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<TcPlcObject Version="1.1.0.1" ProductVersion="3.1.4022.12">
+  <DUT Name="TTurnOverPos" Id="{b34a2910-0e1a-43a3-93ca-635df930e35e}">
+    <Declaration><![CDATA[TYPE TTurnOverPos :
+	(
+		TO_Arm := 0,
+		TO_Fix
+	);
+END_TYPE]]></Declaration>
+  </DUT>
+</TcPlcObject>

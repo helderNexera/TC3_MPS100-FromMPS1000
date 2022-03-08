@@ -1,0 +1,30 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<TcPlcObject Version="1.1.0.1" ProductVersion="3.1.4022.18">
+  <DUT Name="TManLoader" Id="{d77b09d1-a117-4372-8090-3f275e7a5c6e}">
+    <Declaration><![CDATA[{attribute 'pack_mode' := '1'}
+TYPE TManLoader :
+	STRUCT
+		eTableSide				: TTableSide;
+		bAxisZSafe				: ARRAY[0..1] OF BOOL;
+		aTAxis					: ARRAY[0..4] OF TManDrive;
+		aTAxisPos				: ARRAY[0..4] OF TManDrivePos;
+		TSafe					: TManButton;
+		TVisionCalibration		: TManButton;
+		THead1Vacuum			: TManButton;
+		THead2Vacuum			: TManButton;
+		TPlateVacuum			: TManButton;
+		alrVaccumValue			: ARRAY[0..1] OF  LREAL;
+		alrVaccumThershold		: ARRAY[0..1] OF  LREAL;
+		TMovePlateTakerDown		: TManButton;
+		TAspirationBrush		: TManButton;
+		lrSensorAdjust			: LREAL;
+		lrSensorMeasure			: LREAL;
+		wRobotPos				: WORD;
+		TZSensorTeach			: TManButton;
+		TMoveVision2Table		: TManButton;
+		TMoveVision2Lift		: TManButton;
+		wMoveVision2LiftPos		: WORD;
+	END_STRUCT
+END_TYPE]]></Declaration>
+  </DUT>
+</TcPlcObject>

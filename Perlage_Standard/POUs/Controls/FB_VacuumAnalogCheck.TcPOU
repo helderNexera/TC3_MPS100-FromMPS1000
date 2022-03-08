@@ -1,0 +1,77 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<TcPlcObject Version="1.1.0.1" ProductVersion="3.1.4022.12">
+  <POU Name="FB_VacuumAnalogCheck" Id="{c8aaab65-b3f9-4bbc-aaf8-2f68cc45b9dc}" SpecialFunc="None">
+    <Declaration><![CDATA[FUNCTION_BLOCK FB_VacuumAnalogCheck
+
+(*
+	Description 	: Bloc fonction de gestion d'un module de mise sous vide avec niveau de mesure de vide analogique
+	Auteur		: DRE
+	Date		: 24.08.2016
+	Version		: 1.00
+
+	Modifications :
+
+*)
+
+VAR_INPUT
+	bEnableVacuum			: BOOL	:= FALSE;			(* Demande d'activation du vacuum *)
+	tBlowingTime				: TIME	:= t#200ms;			(* Temps de soufflage à la coupure du vacuum *)
+	tVacErrorDelay			: TIME	:= t#400ms;			(* Temps de détection d'une erreur de vide *)
+	bReset					: BOOL	:= FALSE;			(* MAZ du bloc en cas d'erreur *)
+	iVacuum					: INT;						(* Capteur de vacuum *)
+	tWaitVacuumOK			: TIME	:= t#0ms;				(* Temps de détection d'un vide correct *)
+	lrVacuumThreshold		: LREAL	:= 9; //-0.7;				(* Seuil de dépression demandée *)
+	bDisableVacuumChecking	: BOOL	:= FALSE;
+END_VAR
+VAR_OUTPUT
+	bVacuumOn				: BOOL	:= FALSE;			(* Activation du vacuum *)
+	bBlowOn					: BOOL	:= FALSE;			(* Activation du soufflage *)
+	bVacuumError			: BOOL	:= FALSE;			(* La demande d'activation s'est terminée par une erreur *)
+	lrVacuum				: LREAL	:= 0;					(* Dépression actuelle *)
+	bVacuumOK				: BOOL;
+	bVacuumCorrect			: BOOL	:= FALSE;			(* La demande d'activation a été bien traitée *)
+	bVacuumStable			: BOOL	:= FALSE;			(* Le vacuum est stabilisé *)
+END_VAR
+VAR
+	TInput					: ConverterLinearLimit;
+	TVacuum				: FB_Vacuum;
+END_VAR
+VAR PERSISTENT
+	iAnalogMinVoltage		: INT	:= 6500;				(* 1V*)
+	iAnalogMaxVoltage 		: INT	:= 31600;				(*5V*)
+	lrAnalogMinVacuum		: LREAL	:= 0;					(*kPa or l/min*)
+	lrAnalogMaxVacuum 		: LREAL	:= 9.6;					(*kPa or l/min*)
+END_VAR]]></Declaration>
+    <Implementation>
+      <ST><![CDATA[TInput(
+	iInput := iVacuum,
+	iHardwareMin := iAnalogMinVoltage,
+	iHardwareMax := iAnalogMaxVoltage,
+	lrSoftwareMin := lrAnalogMinVacuum,
+	lrSoftwareMax :=lrAnalogMaxVacuum
+	);
+lrVacuum := TInput.lrValue;
+bVacuumOK := (lrVacuum <= lrVacuumThreshold) AND bEnableVacuum;			// Fonctionnement en vaccum
+
+TVacuum(
+	bEnableVacuum := bEnableVacuum,
+	tBlowingTime := tBlowingTime,
+	tVacErrorDelay := tVacErrorDelay,
+	bReset := bReset,
+	bVacuumOK := bVacuumOK,
+	tWaitVacuumOK := tWaitVacuumOK,
+	bDisableVacuumChecking := bDisableVacuumChecking,
+	bVacuumOn => bVacuumOn,
+	bBlowOn => bBlowOn,
+	bVacuumError => bVacuumError,
+	bVacuumCorrect => bVacuumCorrect
+);
+
+
+]]></ST>
+    </Implementation>
+    <LineIds Name="FB_VacuumAnalogCheck">
+      <LineId Id="41" Count="25" />
+    </LineIds>
+  </POU>
+</TcPlcObject>

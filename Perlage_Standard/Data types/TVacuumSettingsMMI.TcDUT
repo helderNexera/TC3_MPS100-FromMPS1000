@@ -1,0 +1,15 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<TcPlcObject Version="1.1.0.1" ProductVersion="3.1.4022.12">
+  <DUT Name="TVacuumSettingsMMI" Id="{2299021b-7f3f-434e-8766-63f837781263}">
+    <Declaration><![CDATA[{attribute 'pack_mode' := '1'}
+TYPE TVacuumSettingsMMI :
+STRUCT
+	TTable				: TVaccumSettings;
+	TLoaderHead		: TVaccumSettings;
+	TLoaderPlate			: TVaccumSettings;
+	TTurnOver			: TVaccumSettings;
+	iTablePartialDelay	: INT;
+END_STRUCT
+END_TYPE]]></Declaration>
+  </DUT>
+</TcPlcObject>

@@ -1,0 +1,13 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<TcPlcObject Version="1.1.0.1" ProductVersion="3.1.4022.12">
+  <DUT Name="TPlatePartStatus" Id="{79165479-3d36-49ee-b8cd-5143ca4c6cba}">
+    <Declaration><![CDATA[TYPE TPlatePartStatus :
+	(
+		PPS_Undefined := 0,
+		PPS_Present,
+		PPS_Absent,
+		PPS_BadPart
+	);
+END_TYPE]]></Declaration>
+  </DUT>
+</TcPlcObject>

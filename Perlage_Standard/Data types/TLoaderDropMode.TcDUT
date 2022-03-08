@@ -1,0 +1,12 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<TcPlcObject Version="1.1.0.1" ProductVersion="3.1.4022.12">
+  <DUT Name="TLoaderDropMode" Id="{1c5400e0-140d-45f7-836f-06955f37d3d1}">
+    <Declaration><![CDATA[TYPE TLoaderDropMode :
+	(
+		LDM_DropAndGoUp := 0,
+		LDM_DropAndWaitDown,
+		LDM_WaitDownAndDrop
+	);
+END_TYPE]]></Declaration>
+  </DUT>
+</TcPlcObject>

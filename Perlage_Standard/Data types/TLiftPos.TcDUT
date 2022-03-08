@@ -1,0 +1,16 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<TcPlcObject Version="1.1.0.1" ProductVersion="3.1.4022.12">
+  <DUT Name="TLiftPos" Id="{12329066-46f5-497e-9e02-b229d4a457c9}">
+    <Declaration><![CDATA[TYPE TLiftPos :
+	(
+		LP_OnPlate := 0,
+		LP_OnPlateLoad,
+		LP_Moving,
+		LP_Empty,
+		LP_Full,
+		LP_OpenDrawer
+	);
+END_TYPE
+]]></Declaration>
+  </DUT>
+</TcPlcObject>

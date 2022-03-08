@@ -1,0 +1,51 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<TcPlcObject Version="1.1.0.1" ProductVersion="3.1.4022.18">
+  <POU Name="BG_Serial" Id="{3eb58fd0-b736-4c29-83de-1d6dab660c30}" SpecialFunc="None">
+    <Declaration><![CDATA[PROGRAM BG_Serial
+VAR_INPUT
+	Enable					: BOOL;
+END_VAR
+VAR
+	bFirstPass				: BOOL	:= TRUE;
+	i						: INT;
+	(* background communication with the COM port device *)
+	as_Control				: ARRAY [1..4] OF SerialLineControlADS;
+	as_Config				: ARRAY[1..4] OF ComSerialConfig;
+	ab_ControlError			: ARRAY [1..4] OF BOOL;
+	an_ControlErrorID			: ARRAY [1..4] OF UDINT;
+END_VAR]]></Declaration>
+    <Implementation>
+      <ST><![CDATA[IF (bFirstPass) THEN
+	FOR i:=1 TO C_NB_OF_COM DO
+		as_Config[i].ComPort := INT_TO_UDINT(C_COM_NUMBERS[i]);
+		IF (as_Config[i].ComPort <> 0) THEN
+			as_Config[i].Baudrate :=38400;
+			as_Config[i].Parity :=PARITY_NONE;
+			as_Config[i].DataBits :=8;
+			as_Config[i].StopBits :=STOPBITS_ONE;
+			as_Config[i].DTR :=DTR_CTRL_DISABLE;
+			as_Config[i].RTS :=RTS_CTRL_DISABLE;
+			as_Config[i].CTS :=FALSE;
+			as_Config[i].DSR :=FALSE;
+		END_IF
+	END_FOR
+	bFirstPass := FALSE;
+END_IF
+
+FOR i:=1 TO C_NB_OF_COM DO
+	IF (as_Config[i].ComPort <> 0) THEN
+		as_Control[i](
+				Connect		:= TRUE,
+				SerialCfg		:= as_Config[i],
+				TxBuffer		:= TxBuffer_MCR[i],					(* transmit buffer; see global variables *)
+				RxBuffer		:= RxBuffer_MCR[i],					(* receive buffer; see global variables *)
+				Error		=> ab_ControlError[i],
+				ErrorID		=> an_ControlErrorID[i]);
+	END_IF
+END_FOR]]></ST>
+    </Implementation>
+    <LineIds Name="BG_Serial">
+      <LineId Id="13" Count="27" />
+    </LineIds>
+  </POU>
+</TcPlcObject>

@@ -1,0 +1,13 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<TcPlcObject Version="1.1.0.1" ProductVersion="3.1.4022.12">
+  <DUT Name="TGiver" Id="{506892c3-ab28-4f9e-a361-1e9ad3d40c13}">
+    <Declaration><![CDATA[{attribute 'pack_mode' := '1'}
+TYPE TGiver :
+	STRUCT
+		bHasGiven		: BOOL;		(* Part has been given *)
+		bPartDataReady	: BOOL;
+		TPartData		: TPartData;
+	END_STRUCT
+END_TYPE]]></Declaration>
+  </DUT>
+</TcPlcObject>

@@ -1,0 +1,49 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<Project Crc="3414159883" DefaultTargets="Build" xmlns="http://schemas.microsoft.com/developer/msbuild/2003" ToolsVersion="4.0">
+  <PropertyGroup>
+    <Configuration Condition=" '$(Configuration)' == '' ">Debug</Configuration>
+    <SchemaVersion>2.0</SchemaVersion>
+    <ProjectGuid>{35b78da6-1d47-4653-ab6e-a0b3d7148bba}</ProjectGuid>
+    <OutputType>Exe</OutputType>
+    <RootNamespace>TwinCAT3SafePlcProject</RootNamespace>
+    <AssemblyName>TwinCAT3SafePlcProject</AssemblyName>
+    <FileUpgradeFlags />
+    <UpgradeBackupLocation />
+    <OldToolsVersion>2.0</OldToolsVersion>
+    <TargetSystem>EL6900</TargetSystem>
+    <ProgrammingLanguage>Graphical Editor</ProgrammingLanguage>
+    <Worker>DLA</Worker>
+    <IntProjName>SafetyMPS1000</IntProjName>
+    <IsNewCreated>false</IsNewCreated>
+    <SPlcProjVersion>1.2.0.0</SPlcProjVersion>
+    <Name>SafetyMPS1000</Name>
+    <NextSdsId>14</NextSdsId>
+  </PropertyGroup>
+  <PropertyGroup Condition=" '$(Configuration)' == 'Release' ">
+    <DebugSymbols>false</DebugSymbols>
+    <OutputPath>bin\Release\</OutputPath>
+    <EnableUnmanagedDebugging>false</EnableUnmanagedDebugging>
+    <CodeAnalysisRuleSet>AllRules.ruleset</CodeAnalysisRuleSet>
+  </PropertyGroup>
+  <ItemGroup>
+    <None Include="TargetSystemConfig.xml">
+      <Visible>false</Visible>
+    </None>
+    <None Include="TwinSafeGroup1\Alias Devices\QbPowerOnDrives.sds" />
+    <None Include="TwinSafeGroup1\Alias Devices\QBResetSafety.sds" />
+    <None Include="TwinSafeGroup1\Alias Devices\A29_4.sds" />
+    <None Include="TwinSafeGroup1\Alias Devices\A29_5.sds" />
+    <None Include="TwinSafeGroup1\Alias Devices\ErrorAcknowledgement.sds" />
+    <None Include="TwinSafeGroup1\Alias Devices\QBStartSafety.sds" />
+    <None Include="TwinSafeGroup1\Alias Devices\Term 5 %28EL1918%29 - Module 1 %28FSOE%29.sds" />
+    <None Include="TwinSafeGroup1\TwinSafeGroup1.sal" />
+    <None Include="TwinSafeGroup1\TwinSafeGroup1.sal.diagram">
+      <Visible>false</Visible>
+      <DependentUpon>TwinSafeGroup1\TwinSafeGroup1.sal</DependentUpon>
+    </None>
+  </ItemGroup>
+  <ItemGroup>
+    <Folder Include="TwinSafeGroup1" />
+    <Folder Include="TwinSafeGroup1\Alias Devices" />
+  </ItemGroup>
+</Project>

@@ -1,0 +1,11 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<TcPlcObject Version="1.1.0.1" ProductVersion="3.1.4022.12">
+  <DUT Name="TLoaderTakeMode" Id="{e4b7ea21-a77d-4227-952c-0fd47a78cd56}">
+    <Declaration><![CDATA[TYPE TLoaderTakeMode :
+	(
+		LTM_GoDownAndVacuum := 0,
+		LTM_VacuumAndGoDown
+	);
+END_TYPE]]></Declaration>
+  </DUT>
+</TcPlcObject>

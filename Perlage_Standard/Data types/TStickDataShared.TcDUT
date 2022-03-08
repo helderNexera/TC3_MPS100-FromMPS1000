@@ -1,0 +1,11 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<TcPlcObject Version="1.1.0.1" ProductVersion="3.1.4022.12">
+  <DUT Name="TStickDataShared" Id="{acb40218-24e9-4d41-8f2f-625bcda1793a}">
+    <Declaration><![CDATA[{attribute 'pack_mode' := '1'}
+TYPE TStickDataShared :
+STRUCT
+	sStickDataMMIShared		: TStickDataMMIShared;
+END_STRUCT
+END_TYPE]]></Declaration>
+  </DUT>
+</TcPlcObject>

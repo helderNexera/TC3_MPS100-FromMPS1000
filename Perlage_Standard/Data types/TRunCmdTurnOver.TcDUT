@@ -1,0 +1,13 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<TcPlcObject Version="1.1.0.1" ProductVersion="3.1.4022.12">
+  <DUT Name="TRunCmdTurnOver" Id="{72dbf412-b1d8-479c-81f8-274abd52d459}">
+    <Declaration><![CDATA[TYPE TRunCmdTurnOver :
+	(
+		RCTO_None,
+		RCTO_TakePart,
+		RCTO_GivePart,
+		RCTO_Turn
+	);
+END_TYPE]]></Declaration>
+  </DUT>
+</TcPlcObject>

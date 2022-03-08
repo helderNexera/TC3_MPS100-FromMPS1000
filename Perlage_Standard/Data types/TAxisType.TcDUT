@@ -1,0 +1,10 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<TcPlcObject Version="1.1.0.1" ProductVersion="3.1.4022.12">
+  <DUT Name="TAxisType" Id="{d644b4f6-5030-442a-b794-5e9aed13b4b5}">
+    <Declaration><![CDATA[TYPE TAxisType :
+	(	AT_Standard,
+		AT_AX5000
+	);
+END_TYPE]]></Declaration>
+  </DUT>
+</TcPlcObject>

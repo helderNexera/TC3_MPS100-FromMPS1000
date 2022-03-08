@@ -1,0 +1,20 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<TcPlcObject Version="1.1.0.1" ProductVersion="3.1.4022.12">
+  <DUT Name="TRunDataLoader" Id="{7d83fad7-81a6-4066-95d3-3ba69a46a53d}">
+    <Declaration><![CDATA[{attribute 'pack_mode' := '1'}
+TYPE TRunDataLoader :
+STRUCT
+	eTaker				: TLoaderHead;
+	eModule				: TLoaderModulePos;
+	iLayringPos			: INT;
+	iLayringOffsetPos		: INT;
+	aTPartData			: ARRAY[0..1] OF TPartData;  (* TLoaderHead *)
+	bPlatePresent		: BOOL;
+	lrZPositionTakeGive	: LREAL;
+	iScanModel			: INT;
+	iCurrentScanOK		: INT;
+	iCurrentScanTotal		: INT;
+END_STRUCT
+END_TYPE]]></Declaration>
+  </DUT>
+</TcPlcObject>

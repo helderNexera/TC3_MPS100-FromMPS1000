@@ -1,0 +1,347 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<TcPlcObject Version="1.1.0.1" ProductVersion="3.1.4022.18">
+  <POU Name="VisionHdl" Id="{e4a16109-dcef-49f3-bacb-5f491a01552d}" SpecialFunc="None">
+    <Declaration><![CDATA[FUNCTION_BLOCK VisionHdl
+(*
+	Description 	: Bloc fonction de gestion de la vision
+	Auteur		: DRE
+	Date		: 07.09.2016
+	Version		: 1.00
+
+	Modifications :
+
+*)
+
+VAR_INPUT
+	bEnable						: BOOL;
+	bNewJob					: BOOL;
+	bPowerOn					: BOOL;
+	bResetErrors					: BOOL;
+	bStopReq					: BOOL;
+	bPauseReq					: BOOL;
+	bJobInProgress				: BOOL;
+	eCommand					: TModuleCommands;
+	acVisionRecipeName			: STRING(20);
+	eRunCommand				:TRunCmdVision;
+END_VAR
+VAR_OUTPUT
+	bModuleError					: BOOL;
+	bNotReady					: BOOL;
+	bNotConnected				: BOOL;
+	bInSimulation					: BOOL;
+	eRunStatus					: TRunStatus;
+END_VAR
+VAR_IN_OUT
+	sCurrentState					: TModuleData;
+	TManualCmd					: TManVision;
+	TVision						: TVisionData;
+	sRunData					: TRunDataVision;
+END_VAR
+VAR PERSISTENT
+	bSimVision					: BOOL;
+END_VAR
+VAR
+	fbNtGetTime					: NT_GetTime;
+	bNtGetTime					: BOOL;
+(*	bVisionBusy					: BOOL;*)
+	eVisionStep					: TModuleSteps := SP_RunStp0;
+	eVisionCommand				: TVisionRequest;
+	TAliveCheckTimer			: TON;
+	bAliveCheck					: BOOL;
+	bLastVisionConnected			: BOOL;
+	TNow						: TIMESTRUCT;
+END_VAR
+]]></Declaration>
+    <Implementation>
+      <ST><![CDATA[IF (NOT sCurrentState.bStepMode) THEN
+	sCurrentState.bWaitStep := FALSE;
+END_IF
+
+CASE eCommand OF
+	MC_NoCmd :
+		CASE sCurrentState.eStatus OF
+			MS_Init :
+				IF bEnable THEN
+				CASE sCurrentState.eStep OF
+					SP_InitStp1 : (* Init all synchros *)
+						bNotReady := FALSE;
+						IF (TVision.bRequestDone) THEN (* Wait until last command is completed*)
+							sCurrentState.eStep := SP_InitStp2;
+						END_IF
+					SP_InitStp2:
+						TVision.acRefFileName := acVisionRecipeName;
+						eVisionCommand := VR_Init;
+						sCurrentState.eStep := SP_InitStp3;
+					SP_InitStp3:
+						IF (TVision.bRequestDone) AND (TVision.bReady OR TVision.bConfigMode) THEN
+							sCurrentState.eStep := SP_InitStp99;
+						ELSIF (TVision.bRequestError) THEN
+							bNotReady := TRUE;
+						END_IF
+					SP_InitStp99 : (* Leave Init *)
+						sCurrentState.eStep := SP_RunStp1;
+						sCurrentState.eStatus := MS_Ready;
+						sCurrentState.bInitDone := TRUE;
+				END_CASE
+				ELSE
+					sCurrentState.eStatus := MS_Ready;
+					sCurrentState.bInitDone := TRUE;
+				END_IF
+			MS_Running :
+				IF bEnable AND  (NOT sCurrentState.bWaitStep) THEN
+					CASE sCurrentState.eStep OF
+						SP_RunStp1:
+							eRunStatus := RS_WaitRequest;
+							CASE eRunCommand OF
+								RCV_None:
+									IF bStopReq  THEN
+										sCurrentState.eStatus := MS_Ready;
+									ELSIF bPauseReq THEN
+										sCurrentState.eStatus := MS_Paused;
+									END_IF
+								RCV_GrabImage:
+									sCurrentState.eStep := SP_RunStp10;
+								RCV_AnalyseImage:
+									sCurrentState.eStep := SP_RunStp20;
+							END_CASE
+							IF sCurrentState.eStep<> SP_RunStp1 THEN eRunStatus := RS_ProcessRequest1; END_IF
+						SP_RunStp10:
+							eVisionCommand := VR_GrabImage;
+							sCurrentState.eStep := SP_RunStp11;
+						SP_RunStp11:
+							IF (TVision.bRequestDone) THEN
+								sCurrentState.eStep := SP_RunStp1;
+							ELSIF (TVision.bRequestError) THEN
+								bNotReady := TRUE;
+							END_IF
+						SP_RunStp20:
+							eVisionCommand := VR_Analyse;
+							TVision.iUseModel := sRunData.iUseModel;
+							sCurrentState.eStep := SP_RunStp21;
+						SP_RunStp21:
+							IF (TVision.bRequestDone) AND (TVision.bReady) THEN
+								sRunData.TVisionPartData := TVision.TPartData;
+								sCurrentState.eStep := SP_RunStp1;
+							ELSIF (TVision.bRequestError) THEN
+								bNotReady := TRUE;
+							END_IF
+
+					END_CASE
+				END_IF
+			MS_Manual :
+				TManualCmd.TInit.Enable := TVision.bConnected;
+				TManualCmd.TAnalyse.Enable := TVision.bReady;
+				TManualCmd.TRun.Enable := TVision.bReady;
+				TManualCmd.bConnected := TVision.bConnected;
+				TManualCmd.iMaxModel := TVision.iMaxModel;
+				TManualCmd.bReady := TVision.bReady;
+				TManualCmd.bSimRecipe := TVision.bSimRecipe;
+				TManualCmd.TPartData := TVision.TPartData;
+				IF NOT TVision.bConnected OR NOT TVision.bReady THEN
+					TManualCmd.bPartDataValid := FALSE;
+				END_IF
+				CASE sCurrentState.eStep OF
+					SP_ManualStp0:
+						TManualCmd.TInit.Activate := FALSE;
+						TManualCmd.TAnalyse.Activate := FALSE;
+						TManualCmd.TRun.Activate := FALSE;
+						TManualCmd.acVisionRecipeName := TVision.acRefFileName;
+						TManualCmd.iUseModel := TVision.iUseModel;
+						TManualCmd.bConfigMode.Enable := TRUE;
+						TManualCmd.bConfigMode.Activate := TVision.bConfigMode;;
+						IF (TVision.bRequestDone) THEN (* Wait until last command is completed*)
+							sCurrentState.eStep := SP_ManualStp1;
+						END_IF
+					SP_ManualStp1:
+						IF bStopReq THEN
+							sCurrentState.eStatus := MS_Stopped;
+						END_IF
+						IF TManualCmd.TInit.Activate THEN
+							TManualCmd.bPartDataValid := FALSE;
+							TManualCmd.TRun.Activate := FALSE;
+							TManualCmd.TInit.Activate := FALSE;
+							TVision.acRefFileName := TManualCmd.acVisionRecipeName;
+							TVision.iMaxModel := 0;
+							TVision.iUseModel := 0;
+							eVisionCommand := VR_Init;
+							TManualCmd.TInitTime := TNow;
+							sCurrentState.eStep := SP_ManualStp2;
+						END_IF
+						IF TManualCmd.TAnalyse.Activate THEN
+							TManualCmd.bPartDataValid := FALSE;
+							TManualCmd.TRun.Activate := FALSE;
+							TManualCmd.TAnalyse.Activate := FALSE;
+							eVisionCommand := VR_GrabImage;
+							TVision.iUseModel := TManualCmd.iUseModel;
+							TManualCmd.TAnalyseTime := TNow;
+							sCurrentState.eStep := SP_ManualStp3;
+						END_IF
+						IF TManualCmd.TRun.Activate THEN
+							IF NOT TManualCmd.TRun.Enable THEN
+								TManualCmd.TRun.Activate := FALSE;
+							ELSE
+								eVisionCommand := VR_GrabImage;
+								TVision.iUseModel := TManualCmd.iUseModel;
+								sCurrentState.eStep := SP_ManualStp3;
+							END_IF
+						END_IF
+						TVision.bConfigMode := TManualCmd.bConfigMode.Activate;
+					SP_ManualStp2:
+						TManualCmd.bReady := FALSE;
+						IF (TVision.bRequestDone) THEN (* Wait until last command is completed*)
+							sCurrentState.eStep := SP_ManualStp1;
+						END_IF
+					SP_ManualStp3: (* Wait for image grabbed *)
+						IF (TVision.bRequestDone) THEN
+							eVisionCommand := VR_Analyse;
+							sCurrentState.eStep := SP_ManualStp4;
+						END_IF
+					SP_ManualStp4: (* Wait analyse done *)
+						IF (TVision.bRequestDone) THEN (* Wait until last command is completed*)
+							TManualCmd.bPartDataValid := TRUE;
+							sCurrentState.eStep := SP_ManualStp1;
+						END_IF
+				END_CASE
+			MS_Paused:
+				IF bStopReq THEN
+					sCurrentState.eStatus := MS_Ready;
+				END_IF
+		END_CASE;
+	MC_Init :
+		IF sCurrentState.bInitDone THEN
+			sCurrentState.eStep := SP_InitStp99;
+		ELSE
+			sCurrentState.eStep := SP_InitStp1;
+		END_IF
+		sCurrentState.eStatus := MS_Init;
+	MC_Run :
+		IF TVision.bConfigMode THEN
+			bNotReady := TRUE;
+		ELSE
+			sCurrentState.eStatus := MS_Running;
+		END_IF
+	MC_Manual :
+		sCurrentState.bInitDone := FALSE;
+		sCurrentState.eStatus := MS_Manual;
+		sCurrentState.eStep := SP_ManualStp0;
+	MC_Stop :
+		sCurrentState.eStatus := MS_Stopped;
+END_CASE;
+
+(* Vision Com *)
+IF (bLastVisionConnected <> TVision.bConnected) THEN
+	IF (TVision.bConnected) THEN (*Vision just connected, reset alive and alive timer *)
+		bAliveCheck := FALSE;
+		TVision.bAlive := FALSE;
+		TAliveCheckTimer(
+			IN	:= FALSE,
+		);
+	END_IF
+	bLastVisionConnected := TVision.bConnected;
+END_IF
+IF (TVision.bConnected) THEN (* check if vision software is still alive *)
+	TAliveCheckTimer(
+		IN	:= (bAliveCheck = TVision.bAlive),
+		PT	:= t#10s,
+	);
+	bAliveCheck := TVision.bAlive;
+	IF (TAliveCheckTimer.Q) THEN
+		TVision.bConnected := FALSE;
+	END_IF
+END_IF
+IF (TVision.bConnected) THEN
+	CASE eVisionStep OF
+		SP_RunStp0: (* Wait command *)
+			TVision.bRequestDone := TRUE;
+			IF (eVisionCommand <> VR_None) THEN
+				TVision.eRequest := eVisionCommand;
+				(*Write parameter here *)
+				TVision.bRequestError := FALSE;
+				TVision.bRequestDone := FALSE;
+				eVisionStep := SP_RunStp1;
+			END_IF
+		SP_RunStp1: (* Wait command received by the vision*)
+			IF (TVision.eRequest = VR_None) THEN
+				eVisionStep := SP_RunStp0;
+			END_IF
+	END_CASE
+ELSE
+	(* No vision connected, reset interface and mark request error *)
+	TVision.bRequestError := TRUE;
+	TVision.bRequestDone := TRUE;
+	TVision.bAlive := FALSE;
+	TVision.bReady := FALSE;
+	TVision.bSimRecipe := FALSE;
+	TVision.eRequest := VR_None;
+	TVision.acRefFileName := '';
+	TVision.iUseModel := 0;
+	TVision.iMaxModel := 0;
+	TVision.TPartData.bPresent := FALSE;
+	TVision.TPartData.bValid := FALSE;
+	TVision.TPartData.lrScore := 0;
+	TVision.TPartData.lrTheta := 0;
+	TVision.TPartData.lrX := 0;
+	TVision.TPartData.lrY := 0;
+	eVisionStep := SP_RunStp0;
+END_IF
+eVisionCommand := VR_None;
+bNotConnected := NOT TVision.bConnected;
+bInSimulation := TVision.bSimRecipe;
+
+
+IF NOT fbNtGetTime.Busy THEN
+	bNtGetTime := NOT bNtGetTime;
+END_IF
+
+fbNtGetTime(
+	START := 	bNtGetTime
+);
+
+IF NOT fbNtGetTime.Busy THEN
+	TNow := fbNtGetTime.TIMESTR;
+END_IF
+
+IF bResetErrors THEN
+	bNotReady := FALSE;
+	bNotConnected := FALSE;
+	sCurrentState.bInError := FALSE;
+END_IF
+
+IF bSimVision THEN
+	IF bNotConnected OR bNotReady THEN
+		sCurrentState.bInError := TRUE;
+		IF (sCurrentState.eStatus <> MS_Manual) AND (sCurrentState.eStatus <> MS_Stopped) AND (sCurrentState.eStatus <> MS_Init) THEN
+			sCurrentState.eStatus := MS_Ready;
+		END_IF
+	END_IF
+	IF bNotConnected OR bNotReady OR bNewJob THEN
+		sCurrentState.bInitDone := FALSE;
+		IF (sCurrentState.eStatus <> MS_Manual) THEN
+			sCurrentState.eStatus := MS_Stopped;
+		END_IF
+	END_IF
+ELSE
+	sCurrentState.bInitDone := TRUE;
+	sCurrentState.bInError := FALSE;
+END_IF
+
+IF NOT bJobInProgress AND NOT bNotConnected THEN (* bypass when no recipe is loaded *)
+	sCurrentState.bInitDone := TRUE;
+	sCurrentState.bInError := FALSE;
+	bNotConnected := FALSE;
+	bNotReady := FALSE;
+END_IF
+
+sRunData.iMaxModel := TVision.iMaxModel;
+
+sCurrentState.bWarning := bInSimulation;
+bModuleError := sCurrentState.bInError;
+
+sCurrentState.bRunning := (sCurrentState.eStatus = MS_Running);
+IF (sCurrentState.eStatus <> MS_Running) THEN eRunStatus := RS_NotRunning; END_IF]]></ST>
+    </Implementation>
+    <LineIds Name="VisionHdl">
+      <LineId Id="51" Count="285" />
+    </LineIds>
+  </POU>
+</TcPlcObject>

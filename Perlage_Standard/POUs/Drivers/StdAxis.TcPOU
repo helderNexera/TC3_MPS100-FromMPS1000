@@ -1,0 +1,918 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<TcPlcObject Version="1.1.0.1" ProductVersion="3.1.4022.18">
+  <POU Name="StdAxis" Id="{8ee4d474-4eaf-4374-b412-d92d2974afef}" SpecialFunc="None">
+    <Declaration><![CDATA[FUNCTION_BLOCK StdAxis
+
+(*
+	Description 	: Bloc fonction de gestion d'un axe
+	Auteur		: DRE
+	Date		: 30.08.2016
+	Version		: 1.00
+
+	Modifications :
+
+*)
+
+VAR_INPUT
+	eCommand				: TAxisCommands;					(* Commande d'axe à exécuter *)
+	lrTargetPos				: LREAL;								(* Position cible *)
+	lrTargetSpeed			: LREAL;								(* Vitesse cible *)
+	lrAcceleration 			: LREAL		:= 0;						(* Accélération pour le nouveau mouvement *)
+	lrDeceleration 			: LREAL		:= 0;						(* Décélération pour le nouveau mouvement *)
+	lrJerk 					: LREAL		:= 0;						(* Facteur saccade pour le nouveau mouvement *)
+	bResetErrors				: BOOL;								(* MAZ de l'erreur générale du bloc *)
+	bHomeSensor			: BOOL;								(* Capteur de home *)
+	bPowerIsOn				: BOOL;									(* Alimentation principale présente *)
+	eAxisType				: TAxisType	:= AT_Standard;			(* Type d'axe *)
+	eHomingAxisType		: TAxisHomingType := AHT_OnSensor;	(*Type de homing *)
+	bPosLimitSwitch			: BOOL		:= FALSE;				(* Limit switch côté positif actif *)
+	bNegLimitSwitch			: BOOL		:= FALSE;				(* Limit switch côté negatif actif *)
+	lrMoveOutDist			: LREAL		:= 0;						(* Distance to move out when on switch *)
+	bResetUseTime			: BOOL		:= FALSE;
+END_VAR
+VAR_OUTPUT
+	eCurrentState				: TAxisState	:= AS_PowerOff;
+	lrCurrentPos				: LREAL;
+	lrMinPos					: LREAL;
+	bMinPosMonitoring		: BOOL;
+	lrMaxPos				: LREAL;
+	bMaxPosMonitoring		: BOOL;
+	lrManualSpeed			: LREAL;
+	lrFastManualSpeed		: LREAL;
+	lrRunningSpeed			: LREAL;
+	lrRemainingTimeToGo		: LREAL;
+	dwUseHours				: DWORD;
+END_VAR
+VAR_IN_OUT
+	sAxis					: AXIS_REF;							(* Bloc de données entre NC et PLC*)
+	stServoButton				: TManButton;
+END_VAR
+VAR
+	bServoOn				: BOOL;
+	bHome					: BOOL;
+	bMoveVel				: BOOL;
+	bMoveAbs				: BOOL;
+	bMoveRel				: BOOL;
+	bMoveModulo			: BOOL;
+	bStop					: BOOL;
+	bHalt					: BOOL;
+	bSetPosition				: BOOL;
+	bAxisReady				: BOOL;
+	bAxisHomed				: BOOL;
+	bRemoveLimitSecurity		: BOOL;
+	i						: INT;
+	iUseBlock				: INT;
+	afbMoveAbs				: ARRAY[0..1] OF MC_MoveAbsolute;
+	afbMoveModulo			: ARRAY[0..1] OF MC_MoveModulo;
+	afbMoveRel				: ARRAY[0..1] OF MC_MoveRelative;
+	afbMoveVel				: ARRAY[0..1] OF MC_MoveVelocity;
+	afbStop					: ARRAY[0..1] OF MC_Stop;
+	afbHalt					: ARRAY[0..1] OF MC_Halt;
+	fbPower					: MC_PowerStepper;
+	fbReadPos				: MC_ReadActualPosition;
+	fbReset					: MC_Reset;
+	fbHome					: MC_Home;
+	fbResetSOE				: FB_SoEReset;
+	fbSetPosition				: MC_SetPosition;
+	fbReadParamTimeToGo	: MC_ReadParameter;
+(*	fbReadParamModulo		: MC_ReadParameter;
+	fbReadParamMinPos		: MC_ReadParameter;
+	fbReadParamMaxPos		: MC_ReadParameter; *)
+	fbReadParameters		: MC_ReadParameterSet;
+	fbReadStatus				: MC_ReadStatus;
+	lrPosition					: LREAL;
+	lrSpeed					: LREAL := 100;
+	lrModuloValue			: LREAL;
+	eMoveDir				: MC_Direction;
+	TCheckReady			: TON;
+	eLastCurrentState			: TAxisState	:= AS_PowerOff;
+	eInitCommand			: TAxisCommands;					(* Commande d'axe à exécuter lors du homing *)
+	lrInitTargetPos			: LREAL;
+	lrInitTargetSpeed			: LREAL;
+	lrLimitOutSpeed			: LREAL;						(* Speed to move out of limit switch *)
+	eHomingMode			: MC_HomingMode := MC_DefaultHoming;
+	ePowerCommand			: TAxisCommands;
+	stReadAxisParameters		: ST_AxisParameterSet;
+	stAxisParameters			: ST_AxisParameterSet;
+	eStep					: TModuleSteps := SP_RunStp0;
+	bFirstCycleState			: BOOL;
+	bReadParameters		: BOOL;
+	bReadParametersOnce	: BOOL; (*Make sure we have read the parameters at least one before moving or homing *)
+	iStep					: INT;
+	iState					: INT;
+	lrHomingSearchMin		: LREAL;
+	lrHomingSearchMax		: LREAL;
+	lrHomingOffset			: LREAL;
+	lrHomingPercent			: LREAL;
+	lrUnitMotorTurn			: LREAL;
+	bSearchHoming			: BOOL;
+	bMoveLimitNeg			: BOOL;
+	bMoveToLimitNegRequest	: BOOL;
+	lrCurrentMovingSpeed		: LREAL;
+	iDebugPos				: INT;
+	TUseCounter				: RunningCounter;
+END_VAR]]></Declaration>
+    <Implementation>
+      <ST><![CDATA[(* Some  FB that can be usefull
+MC_Jog
+MC_ReadStatus
+*)
+
+TUseCounter(bStart := bServoOn, bReset := bResetUseTime);
+dwUseHours := TUseCounter.dwHours;
+
+IF (bSearchHoming) THEN
+	eCommand := AC_MoveHome;
+	bSearchHoming := FALSE;
+END_IF
+IF (bMoveLimitNeg) THEN
+	eCommand := AC_MoveLimitNeg;
+	bMoveLimitNeg := FALSE;
+END_IF
+
+IF eCommand =AC_ClearPosition THEN
+	bSetPosition := TRUE;
+	lrPosition := 0;
+END_IF
+
+(* Manual Handling*)
+IF eCommand = AC_None THEN
+	IF stServoButton.Activate AND eCurrentState = AS_PowerOff AND eCurrentState = eLastCurrentState THEN
+		eCommand := AC_ServoOn;
+	ELSIF NOT stServoButton.Activate AND ((eCurrentState = AS_Powering  AND eCurrentState = eLastCurrentState) OR eCurrentState = AS_NotHomed OR eCurrentState = AS_InPosition OR eCurrentState = AS_OnLimitNeg) THEN
+		eCommand := AC_ServoOff;
+	END_IF
+END_IF
+
+(*check external command during homing *)
+IF eCurrentState = AS_Homing OR eCurrentState = AS_MovingHoming OR eCurrentState = AS_MovingLimitNeg THEN
+	CASE eCommand OF
+		AC_ForceStop, AC_ServoOff:
+			eInitCommand := eCommand;
+		AC_MoveLimitNeg:
+			IF eCurrentState = AS_Homing THEN
+				bMoveToLimitNegRequest := TRUE;
+			END_IF
+	END_CASE
+	eCommand := eInitCommand ; (*Use internal command during homing*)
+	eInitCommand := AC_None;
+	lrTargetPos := lrInitTargetPos;
+	lrTargetSpeed := lrInitTargetSpeed;
+END_IF
+
+(*Handle move command *)
+IF eCurrentState = AS_InPosition OR eCurrentState = AS_Moving OR  eCurrentState = AS_Homing OR eCurrentState = AS_MovingHoming OR eCurrentState = AS_MovingLimitNeg THEN
+	CASE eCommand OF
+		AC_MoveAtSpeed:
+			iUseBlock := (iUseBlock + 1) MOD 2;
+			bMoveVel 		:= TRUE;
+			bMoveAbs 		:= FALSE;
+			bMoveRel 		:= FALSE;
+			bMoveModulo 	:= FALSE;
+			bStop 			:= FALSE;
+			bHalt			:= FALSE;
+			lrPosition := lrTargetPos;
+			lrSpeed := lrTargetSpeed;
+			lrCurrentMovingSpeed := lrSpeed;
+			IF (lrPosition < 0) THEN
+				eMoveDir := MC_Negative_Direction;
+			ELSE
+				eMoveDir := MC_Positive_Direction;
+			END_IF
+		AC_MoveAtRelPos:
+			iUseBlock := (iUseBlock + 1) MOD 2;
+			bMoveVel 		:= FALSE;
+			bMoveAbs 		:= FALSE;
+			bMoveRel 		:= TRUE;
+			bMoveModulo 	:= FALSE;
+			bStop 			:= FALSE;
+			bHalt			:= FALSE;
+			lrPosition := lrTargetPos;
+			lrSpeed := lrTargetSpeed;
+			lrCurrentMovingSpeed := lrSpeed;
+		AC_MoveAtAbsPos:
+			iUseBlock := (iUseBlock + 1) MOD 2;
+			bMoveVel 		:= FALSE;
+			bMoveAbs 		:= TRUE;
+			bMoveRel 		:= FALSE;
+			bMoveModulo 	:= FALSE;
+			bStop 			:= FALSE;
+			bHalt			:= FALSE;
+			lrPosition := lrTargetPos;
+			lrSpeed := lrTargetSpeed;
+			lrCurrentMovingSpeed := lrSpeed;
+		AC_MoveModulo:
+			iUseBlock := (iUseBlock + 1) MOD 2;
+			bMoveVel 		:= FALSE;
+			bMoveAbs 		:= FALSE;
+			bMoveRel 		:= FALSE;
+			bMoveModulo 	:= TRUE;
+			bStop 			:= FALSE;
+			bHalt			:= FALSE;
+			lrPosition := lrTargetPos;
+			lrSpeed := lrTargetSpeed;
+			lrCurrentMovingSpeed := lrSpeed;
+			IF (lrPosition < 0) THEN
+	 			lrPosition := LMOD(lrPosition,lrModuloValue) + lrModuloValue;
+			END_IF
+			IF (lrPosition >= lrModuloValue) THEN
+				lrPosition := LMOD(lrPosition,lrModuloValue);
+			END_IF
+		AC_Stop:
+			iUseBlock := (iUseBlock + 1) MOD 2;
+			bMoveVel 		:= FALSE;
+			bMoveAbs 		:= FALSE;
+			bMoveRel 		:= FALSE;
+			bMoveModulo 	:= FALSE;
+			bStop 			:= FALSE;
+			bHalt			:= TRUE;
+			lrCurrentMovingSpeed := lrSpeed;
+		AC_ForceStop:
+			eCurrentState := AS_Stopping;
+	END_CASE
+END_IF
+
+IF (eCurrentState <> eLastCurrentState) THEN
+	eStep := SP_RunStp0;
+	eLastCurrentState := eCurrentState;
+	bFirstCycleState := TRUE;
+ELSE
+	bFirstCycleState := FALSE;
+END_IF
+
+CASE eCurrentState OF
+	AS_PowerOff:
+		bRemoveLimitSecurity := FALSE;
+		bServoOn 		:= FALSE;
+		bHome			:= FALSE;
+		bMoveVel 		:= FALSE;
+		bMoveAbs 		:= FALSE;
+		bMoveRel 		:= FALSE;
+		bMoveModulo 	:= FALSE;
+		bStop 			:= FALSE;
+		bHalt			:= FALSE;
+		bSetPosition 		:= FALSE;
+		IF ePowerCommand = AC_Init OR ePowerCommand = AC_MoveLimitNeg THEN (* continue if we have receive an init command during the reseting step *)
+			eCommand := ePowerCommand;
+		END_IF
+		CASE eCommand OF
+			AC_ServoOn, AC_Init, AC_MoveLimitNeg:
+				ePowerCommand := eCommand;
+				eCurrentState := AS_Powering;
+		END_CASE
+	AS_Powering:
+		IF eCommand = AC_Init OR eCommand = AC_MoveLimitNeg THEN
+			ePowerCommand := eCommand;
+		END_IF
+		CASE eStep OF
+			SP_RunStp0:
+				bServoOn := TRUE;
+				bRemoveLimitSecurity := bPosLimitSwitch OR bNegLimitSwitch;
+				TCheckReady(IN := FALSE);
+				eStep := SP_RunStp1;
+			SP_RunStp1:
+				TCheckReady(IN := TRUE, PT := t#10s);
+				IF TCheckReady.Q THEN
+					eCurrentState := AS_InError;
+					iDebugPos := 1;
+				ELSIF bAxisReady AND bReadParametersOnce THEN
+					CASE ePowerCommand OF (*Check what command trig the power on *)
+						AC_ServoOn:
+							IF bAxisHomed THEN
+								eCurrentState := AS_InPosition;
+							ELSE
+								eCurrentState := AS_NotHomed;
+							END_IF
+						AC_Init:
+							IF bAxisHomed THEN
+								eCurrentState := AS_InPosition;
+							ELSE
+								eCurrentState := AS_Homing;
+							END_IF
+						AC_MoveLimitNeg:
+							eCurrentState := AS_MovingLimitNeg;
+					END_CASE
+					ePowerCommand := AC_None; (* clear previous command *)
+				END_IF
+		END_CASE
+		IF eCommand = AC_ServoOff THEN
+			ePowerCommand := AC_None; (* clear previous command *)
+			eCurrentState := AS_PowerOff;
+		END_IF
+	AS_NotHomed:
+		CASE eCommand OF
+			AC_ServoOff:
+				eCurrentState := AS_PowerOff;
+			AC_Init, AC_Home:
+				eCurrentState := AS_Homing;
+			AC_MoveLimitNeg:
+				eCurrentState := AS_MovingLimitNeg;
+		END_CASE
+		IF NOT bAxisReady THEN
+			iDebugPos := 2;
+			eCurrentState := AS_InError;
+		END_IF
+	AS_Homing:
+		CASE eStep OF
+			SP_RunStp0:
+				bHome := FALSE;
+				IF eHomingAxisType = AHT_NoHoming THEN
+					eStep := SP_RunStp30;
+				ELSE
+					eStep := SP_RunStp1;
+				END_IF
+			SP_RunStp1:
+				IF lrMoveOutDist = 0 THEN
+					eStep := SP_RunStp30;
+				ELSIF bPosLimitSwitch THEN
+					lrPosition := lrMoveOutDist+1;
+					bSetPosition := TRUE;
+					eStep := SP_RunStp10;
+				ELSIF bNegLimitSwitch THEN
+					lrPosition :=  -lrMoveOutDist-1;
+					bSetPosition := TRUE;
+					eStep := SP_RunStp20;
+				ELSE
+					eStep := SP_RunStp30;
+				END_IF
+			SP_RunStp10:
+				IF fbSetPosition.Done THEN
+					lrInitTargetSpeed := lrLimitOutSpeed;
+					lrInitTargetPos := -lrMoveOutDist;
+					eInitCommand := AC_MoveAtRelPos;
+					eStep := SP_RunStp11;
+				END_IF
+			SP_RunStp11:
+				IF afbMoveRel[iUseBlock].Done THEN
+					eStep := SP_RunStp30;
+				ELSIF afbMoveRel[iUseBlock].CommandAborted THEN
+					iDebugPos := 3;
+					eCurrentState := AS_InError;
+				END_IF
+			SP_RunStp20:
+				IF fbSetPosition.Done THEN
+					lrInitTargetSpeed := lrLimitOutSpeed;
+					lrInitTargetPos := lrMoveOutDist;
+					eInitCommand := AC_MoveAtRelPos;
+					eStep := SP_RunStp21;
+				END_IF
+			SP_RunStp21:
+				IF afbMoveRel[iUseBlock].Done THEN
+					eStep := SP_RunStp30;
+				ELSIF afbMoveRel[iUseBlock].CommandAborted THEN
+					iDebugPos := 4;
+					eCurrentState := AS_InError;
+				END_IF
+			SP_RunStp30:
+				bRemoveLimitSecurity := FALSE;
+				bHome := TRUE;
+				CASE eHomingAxisType OF
+					AHT_NoHoming:
+						eHomingMode	:= MC_ForceCalibration;
+					AHT_OnSensor:
+						eHomingMode	:= MC_DefaultHoming;
+					AHT_OnZeroEncoder:
+						eHomingMode	:= MC_DefaultHoming;
+						bHomeSensor := TRUE;
+				END_CASE
+				eStep := SP_RunStp31;
+			SP_RunStp31:
+				IF (eHomingAxisType = AHT_OnZeroEncoder) THEN
+					bHomeSensor := NOT (sAxis.NcToPlc.HomingState >= 4);
+				END_IF
+				IF fbHome.Done THEN
+					bHome := FALSE;
+					bAxisHomed := TRUE;
+					IF bMoveToLimitNegRequest THEN
+						eCurrentState := AS_MovingLimitNeg;
+						bMoveToLimitNegRequest := FALSE;
+					ELSE
+						eCurrentState := AS_InPosition;
+					END_IF
+				END_IF
+		END_CASE
+		IF NOT bAxisReady THEN
+			iDebugPos := 5;
+			eCurrentState := AS_InError;
+		END_IF
+	AS_InPosition:
+		CASE eCommand OF
+			AC_MoveAtSpeed, AC_MoveAtRelPos, AC_MoveAtAbsPos, AC_MoveModulo, AC_Stop:
+				eCurrentState := AS_Moving;
+			AC_ServoOff:
+				eCurrentState := AS_PowerOff;
+			AC_Home:
+				eCurrentState := AS_Homing;
+			AC_MoveHome:
+				IF (eHomingAxisType = AHT_OnSensor) THEN
+					eCurrentState := AS_MovingHoming;
+				END_IF
+			AC_MoveLimitNeg:
+				eCurrentState := AS_MovingLimitNeg;
+		END_CASE
+		IF NOT bAxisReady THEN
+			iDebugPos := 6;
+			eCurrentState := AS_InError;
+		END_IF
+	AS_Moving:
+		IF eCommand = AC_MoveLimitNeg THEN
+			bMoveToLimitNegRequest := TRUE;
+		END_IF
+		IF NOT ((eCommand = AC_MoveAtSpeed) OR (eCommand = AC_MoveAtRelPos) OR (eCommand = AC_MoveAtAbsPos) OR (eCommand = AC_MoveModulo) OR (eCommand = AC_Stop)) THEN (* Not a move command *)
+			FOR i:=0 TO 1 DO
+				IF afbMoveAbs[iUseBlock].Done OR afbMoveModulo[iUseBlock].Done OR afbMoveRel[iUseBlock].Done OR afbStop[iUseBlock].Done OR afbHalt[iUseBlock].Done THEN
+					bMoveVel 		:= FALSE;
+					bMoveAbs 		:= FALSE;
+					bMoveRel 		:= FALSE;
+					bMoveModulo 	:= FALSE;
+					bStop 			:= FALSE;
+					bHalt			:= FALSE;
+					IF bMoveToLimitNegRequest THEN
+						eCurrentState := AS_MovingLimitNeg;
+						bMoveToLimitNegRequest := FALSE;
+					ELSE
+						eCurrentState := AS_InPosition;
+					END_IF
+				END_IF
+			END_FOR
+			FOR i:=0 TO 1 DO
+				IF afbMoveAbs[iUseBlock].CommandAborted OR afbMoveModulo[iUseBlock].CommandAborted OR afbMoveRel[iUseBlock].CommandAborted OR afbStop[iUseBlock].CommandAborted OR afbHalt[iUseBlock].CommandAborted THEN
+					iDebugPos := 7;
+					eCurrentState := AS_InError;
+				END_IF
+			END_FOR
+			IF lrCurrentMovingSpeed <> lrTargetSpeed AND eCurrentState = AS_Moving AND ABS(lrTargetPos-lrCurrentPos)>0.1 THEN
+				(* switch block to update speed *)
+				lrCurrentMovingSpeed := lrTargetSpeed;
+				lrSpeed := lrTargetSpeed;
+				iUseBlock := (iUseBlock + 1) MOD 2;
+			END_IF
+			(*IF NOT fbReadStatus.Status.HasJob AND eCurrentState = AS_Moving AND NOT bFirstCycleState THEN
+				iDebugPos := 8;
+				eCurrentState := AS_InError;
+			END_IF*)
+		END_IF
+		IF NOT bAxisReady THEN
+			iDebugPos := 9;
+			eCurrentState := AS_InError;
+		END_IF
+	AS_MovingHoming:
+		CASE eStep OF
+			SP_RunStp0 :  (* Init Data*)
+				lrHomingOffset := 0;
+				IF stAxisParameters.nEncMaxIncrement = 16#FFFFFFFF THEN
+					lrUnitMotorTurn := stAxisParameters.fEncScaleFactorInternal * DWORD_TO_LREAL(16#000FFFFF+1);
+				ELSE
+					lrUnitMotorTurn := stAxisParameters.fEncScaleFactorInternal * DWORD_TO_LREAL(stAxisParameters.nEncMaxIncrement+1);
+				END_IF
+
+				IF (bMinPosMonitoring) THEN
+					lrHomingSearchMin := lrMinPos;
+				ELSE
+					lrHomingSearchMin := -100;
+				END_IF
+				IF (bMaxPosMonitoring) THEN
+					lrHomingSearchMax := lrMaxPos;
+				ELSE
+					lrHomingSearchMax := 100;
+				END_IF
+				lrInitTargetSpeed := stAxisParameters.fRefVeloSearch;
+				eStep := SP_RunStp1;
+			SP_RunStp1 :  (* Move to homing sensor*)
+				IF  NOT bHomeSensor THEN
+					lrInitTargetPos := lrHomingSearchMin; (*Go in*)
+					eStep := SP_RunStp2;
+				ELSE
+					lrInitTargetPos := lrHomingSearchMax; (*Go out*)
+					eStep := SP_RunStp3;
+				END_IF
+				eInitCommand := AC_MoveAtAbsPos;
+			SP_RunStp2 :  (*moving in, search homing*)
+				IF afbMoveAbs[iUseBlock].Done THEN
+					eCurrentState := AS_InPosition;
+				ELSIF afbMoveAbs[iUseBlock].CommandAborted THEN
+					iDebugPos := 10;
+					eCurrentState := AS_InError;
+				ELSIF  bHomeSensor THEN
+					lrInitTargetPos := lrHomingSearchMax; (*Go out*)
+					eInitCommand := AC_MoveAtAbsPos;
+					eStep := SP_RunStp3;
+				END_IF
+			SP_RunStp3 :(* Moving out, out of sensor*)
+				IF afbMoveAbs[iUseBlock].Done THEN
+					eCurrentState := AS_InPosition;
+				ELSIF afbMoveAbs[iUseBlock].CommandAborted THEN
+					iDebugPos := 11;
+					eCurrentState := AS_InError;
+				ELSIF  NOT bHomeSensor THEN
+					lrInitTargetPos := lrHomingSearchMin; (*Go in*)
+					eInitCommand := AC_MoveAtAbsPos;
+					lrInitTargetSpeed := stAxisParameters.fRefVeloSync;  (* set slow speed*)
+					eStep := SP_RunStp4;
+				END_IF
+			SP_RunStp4 :  (*moving in slowly, search homing*)
+				IF afbMoveAbs[iUseBlock].Done THEN
+					eCurrentState := AS_InPosition;
+				ELSIF afbMoveAbs[iUseBlock].CommandAborted THEN
+					iDebugPos := 12;
+					eCurrentState := AS_InError;
+				ELSIF  bHomeSensor THEN
+					lrHomingOffset := ABS(lrCurrentPos);
+					lrInitTargetPos := lrCurrentPos; (*Go to home*)
+					lrHomingPercent := (lrHomingOffset / lrUnitMotorTurn) * 100;
+					eInitCommand := AC_MoveAtAbsPos;
+					eStep := SP_RunStp5;
+				END_IF
+			SP_RunStp5 :(* Wait until position is reached *)
+				IF afbMoveAbs[iUseBlock].Done THEN
+					eCurrentState := AS_InPosition;
+				ELSIF afbMoveAbs[iUseBlock].CommandAborted THEN
+					iDebugPos := 13;
+					eCurrentState := AS_InError;
+				END_IF
+			END_CASE
+		IF NOT bAxisReady THEN
+			iDebugPos := 14;
+			eCurrentState := AS_InError;
+		END_IF
+	AS_MovingLimitNeg:
+		CASE eStep OF
+			SP_RunStp0 :
+				IF bAxisHomed THEN
+					eStep := SP_RunStp1;
+				ELSE
+					eStep := SP_RunStp10;
+				END_IF
+				lrInitTargetSpeed := stAxisParameters.fRefVeloSearch;
+			SP_RunStp1 :  (* Move to Lower limit*)
+				IF bMinPosMonitoring THEN
+					lrInitTargetPos := lrMinPos;
+					eInitCommand := AC_MoveAtAbsPos;
+					eStep := SP_RunStp2;
+				ELSE
+					eCurrentState := AS_InPosition;
+					// eCurrentState := AS_InPosition; // TODO : Code Original A enlever com. ?????
+				(*ELSIF bNegLimitSwitch THEN // Modif pour test
+					eCurrentState := AS_InPosition;
+				ELSE
+					eCommand := AC_MoveLimitNeg;*)
+				END_IF
+			SP_RunStp2:
+				IF afbMoveAbs[iUseBlock].Done THEN
+					eCurrentState := AS_OnLimitNeg;
+				ELSIF afbMoveAbs[iUseBlock].CommandAborted THEN
+					iDebugPos := 15;
+					eCurrentState := AS_InError;
+				END_IF
+			SP_RunStp10 :  (* Move to LimitNeg sensor*)
+				IF  bNegLimitSwitch THEN
+					eStep := SP_RunStp13;
+				ELSIF lrMoveOutDist = 0 THEN
+					eCurrentState := AS_NotHomed;
+				ELSE
+					lrPosition := lrMoveOutDist+1;
+					bSetPosition := TRUE;
+					eStep := SP_RunStp11;
+				END_IF
+				eInitCommand := AC_MoveAtAbsPos;
+			SP_RunStp11:
+				IF fbSetPosition.Done THEN
+					lrInitTargetPos := -lrMoveOutDist;
+					eInitCommand := AC_MoveAtRelPos;
+					eStep := SP_RunStp12;
+				END_IF
+			SP_RunStp12:
+				IF afbMoveRel[iUseBlock].Done THEN
+					eStep := SP_RunStp10;
+				ELSIF afbMoveRel[iUseBlock].CommandAborted THEN
+					IF  bNegLimitSwitch THEN
+						eStep := SP_RunStp13;
+					ELSE
+						iDebugPos:= 16;
+						eCurrentState := AS_InError;
+					END_IF
+				END_IF
+			SP_RunStp13:
+				IF bMinPosMonitoring THEN
+					lrPosition := lrMinPos+0.5;
+					bSetPosition := TRUE;
+					eStep := SP_RunStp14;
+				ELSE
+					eCurrentState := AS_NotHomed;
+				END_IF
+			SP_RunStp14:
+				IF fbSetPosition.Done THEN
+					eCurrentState := AS_OnLimitNeg;
+				END_IF
+			END_CASE
+		IF NOT bAxisReady THEN
+			iDebugPos := 17;
+			eCurrentState := AS_InError;
+		END_IF
+	AS_OnLimitNeg:
+		CASE eCommand OF
+			AC_ServoOff:
+				eCurrentState := AS_PowerOff;
+			AC_Home, AC_Init:
+				IF bAxisHomed THEN
+					eCurrentState := AS_InPosition;
+				ELSE
+					eCurrentState := AS_Homing;
+				END_IF
+		END_CASE
+		IF NOT bAxisReady THEN
+			iDebugPos := 18;
+			eCurrentState := AS_InError;
+		END_IF
+	AS_Stopping:
+		CASE eStep OF
+			SP_RunStp0:
+				iUseBlock := (iUseBlock + 1) MOD 2;
+				bRemoveLimitSecurity := FALSE;
+				bHome			:= FALSE;
+				bMoveVel 		:= FALSE;
+				bMoveAbs 		:= FALSE;
+				bMoveRel 		:= FALSE;
+				bMoveModulo 	:= FALSE;
+				bStop 			:= TRUE;
+				bHalt			:= FALSE;
+				eStep := SP_RunStp1;
+			SP_RunStp1:
+				IF afbStop[iUseBlock].Done OR afbStop[iUseBlock].CommandAborted THEN
+					iDebugPos := 19;
+					eCurrentState := AS_InError;
+				END_IF
+		END_CASE
+	AS_InError:
+		CASE eStep OF
+			SP_RunStp0:
+				ePowerCommand := AC_None;
+				bMoveToLimitNegRequest := FALSE;
+				bRemoveLimitSecurity := FALSE;
+				bServoOn 		:= FALSE;
+				bHome			:= TRUE;
+				bMoveVel 		:= FALSE;
+				bMoveAbs 		:= FALSE;
+				bMoveRel 		:= FALSE;
+				bMoveModulo 	:= FALSE;
+				bStop 			:= FALSE;
+				bHalt			:= FALSE;
+				bSetPosition 		:= FALSE;
+				bAxisHomed		:= FALSE;
+				eHomingMode	:= MC_ResetCalibration;
+				eStep := SP_RunStp1;
+			SP_RunStp1:
+				IF fbHome.Done OR fbHome.Error THEN
+					bHome := FALSE;
+					eStep := SP_RunStp2;
+				END_IF
+			SP_RunStp2:
+				IF bResetErrors THEN
+					eCurrentState := AS_Resetting;
+				END_IF
+		END_CASE
+	AS_Resetting:
+		IF eCommand = AC_Init OR eCommand = AC_MoveLimitNeg THEN
+			ePowerCommand := eCommand;
+		END_IF
+		CASE eStep OF
+			SP_RunStp0:
+				IF (eAxisType = AT_AX5000) THEN
+					(* For this drive we must use a special drive command for reseting *)
+					eStep :=SP_RunStp1;
+				ELSE
+					eStep :=SP_RunStp10;
+				END_IF
+			SP_RunStp1:
+				fbResetSOE(
+					Axis := sAxis,
+					Execute := FALSE
+				);
+				fbResetSOE(
+					Axis := sAxis,
+					Execute := TRUE
+				);
+				eStep :=SP_RunStp2;
+			SP_RunStp2:
+				fbResetSOE(
+					Axis := sAxis,
+					Execute := FALSE
+				);
+				IF NOT fbResetSOE.Busy THEN
+					IF fbResetSOE.Error THEN
+						iDebugPos :=20;
+						eCurrentState := AS_InError;
+					ELSE
+						eStep :=SP_RunStp10;
+					END_IF
+				END_IF
+			SP_RunStp10:
+				fbReset(
+					Execute 		:= FALSE,
+					Axis 		:= sAxis);
+				fbReset(
+					Execute 		:= TRUE,
+					Axis 		:= sAxis);
+				eStep :=SP_RunStp11;
+			SP_RunStp11:
+				fbReset(
+					Execute 		:= FALSE,
+					Axis 		:= sAxis);
+				IF  NOT fbReset.Busy THEN
+					IF fbReset.Error THEN
+						iDebugPos :=21;
+						eCurrentState := AS_InError;
+					ELSE
+						eCurrentState := AS_PowerOff;
+					END_IF
+				END_IF
+		END_CASE
+END_CASE
+
+fbPower(
+	Enable			:=	bServoOn,
+	Enable_Positive	:=	bServoOn AND NOT bPosLimitSwitch,
+	Enable_Negative	:=	bServoOn  AND NOT bNegLimitSwitch,
+	Override 			:= 	100.000,
+	Axis				:=	sAxis);
+
+fbHome(
+	Execute 			:= bHome,
+	Position 			:= 0,
+	HomingMode		:= eHomingMode,
+	bCalibrationCam 	:= bHomeSensor,
+	Axis 			:= sAxis);
+
+FOR i:=0 TO 1 DO
+	afbMoveAbs[i](
+		Execute			:=	bMoveAbs AND iUseBlock = i,
+		Position			:=	lrPosition,
+		Velocity			:=	lrSpeed,
+		Acceleration		:=	lrAcceleration,
+		Deceleration		:=	lrDeceleration,
+		Jerk 			:=	lrJerk,
+		Axis				:=	sAxis);
+	afbMoveModulo[i](
+		Execute			:=	bMoveModulo AND iUseBlock = i,
+		Position			:=	lrPosition,
+		Velocity			:=	lrSpeed,
+		Acceleration		:=	lrAcceleration,
+		Deceleration		:=	lrDeceleration,
+		Jerk 			:=	lrJerk,
+		Direction    		:=	MC_Shortest_Way,
+		Axis				:=	sAxis);
+	afbMoveRel[i](
+		Execute			:=	bMoveRel AND iUseBlock = i,
+		Distance			:=	lrPosition,
+		Velocity			:=	lrSpeed,
+		Acceleration		:=	lrAcceleration,
+		Deceleration		:=	lrDeceleration,
+		Jerk 			:=	lrJerk,
+		Axis				:=	sAxis);
+	afbMoveVel[i](
+		Execute			:=	bMoveVel AND iUseBlock = i,
+		Velocity			:=	lrSpeed,
+		Acceleration		:=	lrAcceleration,
+		Deceleration		:=	lrDeceleration,
+		Jerk 			:=	lrJerk,
+		Direction			:=	eMoveDir,
+		Axis				:=	sAxis);
+	afbStop[i](
+		Execute		:=	bStop AND iUseBlock = i,
+		Deceleration	:=	lrDeceleration,
+		Jerk 		:=	lrJerk,
+		Axis			:=	sAxis);
+	afbHalt[i](
+		Execute		:=	bHalt AND iUseBlock = i,
+		Deceleration	:=	lrDeceleration,
+		Jerk 		:=	lrJerk,
+		Axis			:=	sAxis);
+END_FOR
+
+fbSetPosition(
+	Execute		:= bSetPosition,
+	Position		:= lrPosition,
+	Axis 		:=sAxis);
+bSetPosition := FALSE;
+
+fbReadPos(
+	Enable 		:= TRUE,
+	Axis 		:=sAxis);
+
+fbReadParamTimeToGo(
+	Enable 		:= TRUE,
+	ReadMode 	:= READMODE_CYCLIC,
+	ParameterNumber := AxisRemainingTimeToGo,
+	Axis 		:=sAxis
+);
+
+(*
+fbReadParamModulo(
+	Enable 		:= TRUE,
+	ReadMode 	:= READMODE_CYCLIC,
+	ParameterNumber := AxisEncoderModuloValue,
+	Axis 		:=sAxis
+);
+
+fbReadParamMinPos(
+	Enable 		:= TRUE,
+	ReadMode 	:= READMODE_CYCLIC,
+	ParameterNumber := SWLimitNeg,
+	Axis 		:=sAxis
+);
+
+fbReadParamMaxPos(
+	Enable 		:= TRUE,
+	ReadMode 	:= READMODE_CYCLIC,
+	ParameterNumber := SWLimitPos,
+	Axis 		:=sAxis
+);*)
+IF NOT fbReadParameters.Busy THEN
+	bReadParameters := NOT bReadParameters;
+END_IF
+
+fbReadParameters(
+	Execute := 	bReadParameters,
+	Parameter := stReadAxisParameters,
+	Axis := sAxis
+);
+
+fbReadStatus(
+	Enable 		:= TRUE,
+	Axis 		:=sAxis
+);
+
+IF fbReadParamTimeToGo.Valid THEN
+	lrRemainingTimeToGo := fbReadParamTimeToGo.Value;
+END_IF
+(*
+IF fbReadParamModulo.Valid THEN
+	lrModuloValue := fbReadParamModulo.Value;
+END_IF
+IF fbReadParamMinPos.Valid THEN
+	lrMinPos := fbReadParamMinPos.Value;
+END_IF
+IF fbReadParamMaxPos.Valid THEN
+	lrMaxPos := fbReadParamMaxPos.Value;
+END_IF *)
+IF fbReadPos.Valid THEN
+	lrCurrentPos := fbReadPos.Position;
+END_IF
+
+IF fbReadParameters.Done THEN
+	stAxisParameters := stReadAxisParameters;
+	lrLimitOutSpeed := stAxisParameters.fRefVeloSearch;
+	lrModuloValue := stAxisParameters.fEncModuloFactor;
+	lrMinPos := stAxisParameters.fEncSoftEndMin;
+	lrMaxPos := stAxisParameters.fEncSoftEndMax;
+	lrManualSpeed := stAxisParameters.fVeloSlowManual;
+	lrFastManualSpeed := stAxisParameters.fVeloFastManual;
+	lrRunningSpeed := stAxisParameters.fVeloMaximum ; (* Maximum velocity*)
+	bMinPosMonitoring := WORD_TO_BOOL(stAxisParameters.bEncEnableSoftEndMinControl);
+	bMaxPosMonitoring := WORD_TO_BOOL(stAxisParameters.bEncEnableSoftEndMaxControl);
+	bReadParametersOnce := TRUE;
+END_IF
+
+bAxisReady := AxisIsReady(sAxis.NcToPlc.StateDWord);
+IF (eAxisType = AT_AX5000) THEN
+	sAxis.PlcToNc.ControlDWord := AxisSetAcceptBlockedDriveSignal(sAxis.PlcToNc.ControlDWord, bRemoveLimitSecurity);
+	(* sAxis.PlcToNc.ControlDWord.8 := bRemoveLimitSecurity;  Should be remove 01.09.2016 DRE *)
+END_IF
+
+(* Error checking*)
+IF AxisInErrorState(sAxis.NcToPlc.AxisState) OR fbPower.Error OR fbHome.Error OR fbSetPosition.Error OR fbReadPos.Error OR  (* fbReadParamModulo.Error OR fbReadParamMinPos.Error OR fbReadParamMaxPos.Error OR*) fbReadParameters.Error OR NOT bPowerIsOn THEN
+	iDebugPos :=22;
+	eCurrentState := AS_InError;
+END_IF
+FOR i:=0 TO 1 DO
+	IF afbMoveAbs[i].Error OR afbMoveModulo[i].Error OR afbMoveRel[i].Error OR afbMoveVel[i].Error OR afbStop[i].Error OR afbHalt[i].Error THEN
+		//iDebugPos :=23;
+		eCurrentState := AS_InError;
+	END_IF
+END_FOR
+
+(*Manual Mode Handling *)
+
+stServoButton.Enable := bPowerIsOn AND ((eCurrentState = AS_InPosition) OR (eCurrentState = AS_NotHomed) OR (eCurrentState = AS_PowerOff) OR (eCurrentState = AS_Powering) OR (eCurrentState = AS_OnLimitNeg));
+stServoButton.Activate := bServoOn;
+
+iStep := eStep;
+iState := eCurrentState;]]></ST>
+    </Implementation>
+    <LineIds Name="StdAxis">
+      <LineId Id="111" Count="165" />
+      <LineId Id="1244" Count="1" />
+      <LineId Id="279" Count="267" />
+      <LineId Id="1123" Count="0" />
+      <LineId Id="1357" Count="0" />
+      <LineId Id="1124" Count="0" />
+      <LineId Id="547" Count="1" />
+      <LineId Id="1121" Count="1" />
+      <LineId Id="549" Count="178" />
+      <LineId Id="1004" Count="0" />
+      <LineId Id="729" Count="4" />
+      <LineId Id="1005" Count="0" />
+      <LineId Id="735" Count="155" />
+    </LineIds>
+  </POU>
+</TcPlcObject>

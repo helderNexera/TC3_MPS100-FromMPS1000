@@ -1,0 +1,736 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<TcPlcObject Version="1.1.0.1" ProductVersion="3.1.4022.18">
+  <POU Name="Manager" Id="{4390d50a-15a7-4647-be58-55df455bef37}" SpecialFunc="None">
+    <Declaration><![CDATA[FUNCTION_BLOCK Manager
+VAR_INPUT
+	bEnable						: BOOL;
+	bPowerOn					: BOOL;
+	bNewJob						: BOOL;
+	bEndOfJob					: BOOL;
+	sMachineData				: TMachineData;
+	bNoEmergencyStop			: BOOL;
+	bLoaderDoorsLocked			: BOOL;
+	bPearlingDoorsLocked		: BOOL;
+	bLoaderDoorsClosed			: BOOL;
+	bPearlingDoorsClosed			: BOOL;
+	bChangeToolReq				: BOOL;
+	sProdLot						: TProductionLot;
+	sConfigFileData				: TConfigFileData;
+	bSimPearling					: BOOL;
+	dwStartJobElapsedTime		: DWORD;
+	bVisionInConfig				: BOOL;
+	bFillMDE						: BOOL;
+	bDisableCleanAfterPearling		: BOOL;
+END_VAR
+VAR_OUTPUT
+	bModuleError					: BOOL;
+	bGreenLight					: BOOL;
+	bRedLight					: BOOL;
+	bBlueLight					: BOOL;
+	bOrangeLight					: BOOL;
+	bLockLoaderDoors			: BOOL;
+	bLockPearlingDoors			: BOOL;
+	bCanChangeTool				: BOOL;
+	eCmdLoader					: TModuleCommands;
+	eCmdTable					: TModuleCommands;
+	eCmdPearling				: TModuleCommands;
+	eCmdTurnOver				: TModuleCommands;
+	eCmdBarrel					: TModuleCommands;
+	eCmdSharpen				: TModuleCommands;
+	eCmdLift1					: TModuleCommands;
+	eCmdLift2					: TModuleCommands;
+	eCmdReject					: TModuleCommands;
+	eCmdVision					: TModuleCommands;
+	eCmdUtilities					: TModuleCommands;
+	bPearlingHead1IsUsed		: BOOL;
+	bPearlingHead2IsUsed		: BOOL;
+	bMMIEmergencyStop			: BOOL;
+	bMMIDoorsPearling			: BOOL;
+	bMMIDoorsLoader			: BOOL;
+	bStopRequest				: BOOL;
+	bPauseRequest				: BOOL;
+	bReadyForChangeJob			: BOOL;
+	bLayeringWithTwoParts		: BOOL;
+	eManagerRunStep			: TModuleSteps;
+	bJobInProgress				: BOOL 				:= FALSE;
+	TJobElapsed					: TIME;
+	dwProdEstimatedTimeLeft		: DWORD;
+	dwMeanMTBF				: DWORD;
+	bConfigError					: BOOL;
+	dwMachineOnHours			: DWORD;
+	TInProdHours				: DWORD;
+END_VAR
+VAR_IN_OUT
+	eMachineMode				: TMachineMode;
+	sModeMask					: TMachineModeMask;
+	sModeReq					: TMachineModeMask;
+	sMachineSafetyCmd			: TMachineManual;
+	bResetErrors					: BOOL;
+	bPurgeReq					: BOOL;
+	sRunData					: TRunData;
+	bSavePersistent				: BOOL;
+	bResetMTBF					: BOOL;
+	sDashboardCmd				: TDashboardCmd;
+	sProductionCmd				: TProductionCmd;
+END_VAR
+VAR PERSISTENT
+	TMaxStopppingTime			: TIME := t#4m;
+	TMaxPausingTime			: TIME := t#5s;
+	iMTBFCounter				: INT;
+	dwMTBFTotalTime			: DWORD;
+END_VAR
+VAR CONSTANT
+	 iMaxModule					: INT := 10;
+END_VAR
+VAR
+	bRunTestMode				: BOOL					 := FALSE;
+	bInError						: BOOL;
+	bInWarning					: BOOL;
+	TForceStop					: TON;
+	TReadyToStopTimer			: TON;
+	TTapReset					: TON;
+	TCheckErrors					: HandleErrors;
+	TBlinking					: TBlink;
+	bBlinking						: BOOL;
+	eStep						: TModuleSteps := SP_RunStp0;
+	bAllowDoorsControl			: BOOL;
+	eLastMachineMode			: TMachineMode;
+	bOneModuleInStop			: BOOL;
+	bOneModuleInReady			: BOOL;
+	bAllModuleInReady			: BOOL;
+	bAllModuleInStop				: BOOL;
+	bAllModuleInPause			: BOOL;
+	bOneModuleInReadyOrStop	: BOOL;
+	bAllModuleInReadyOrStop		: BOOL;
+	bOneModuleInPause			: BOOL;
+	aTModuleStatus				: ARRAY[0..iMaxModule] OF TModuleStatus;
+	i							: INT;
+	eCmdAll						: TModuleCommands;
+	TManagerDashboard			: ManagerDashboard;
+	TManagerRun				: ManagerRun;
+	TManagerRunTest			: ManagerRunTest;
+	bRunInit						: BOOL;
+	bNewJobForRun				: BOOL;
+	bDoChangeTool				: BOOL;
+	bDoInitAfterStop				: BOOL;
+	TWritePersistentData			: FB_WritePersistentData;
+	TJobElapsedCounter			: StopWatch;
+	TMTBFCounter				: MTBFCounter;
+	dwJobQty					: DWORD;
+	bInJobMode					: BOOL;
+	bComputeMTBF				: BOOL						:= FALSE;
+	iMDEAlarm					: INT;
+	TMachineOnCounter			: RunningCounter;
+	TInProdCounter				: RunningCounter;
+	bResetMachineCounters		: BOOL						:= FALSE;
+END_VAR
+]]></Declaration>
+    <Implementation>
+      <ST><![CDATA[(* Reset errors delay*)
+TTapReset(IN := bResetErrors,PT := t#100ms);
+IF TTapReset.Q THEN
+	bResetErrors := FALSE;
+END_IF
+
+
+(* Handle doors locking *)
+IF bAllowDoorsControl THEN
+	sMachineSafetyCmd.bCanLockDoor := NOT (bLoaderDoorsLocked AND bPearlingDoorsLocked);
+	sMachineSafetyCmd.bCanUnlockDoor := bLockLoaderDoors OR bLockPearlingDoors; (*NOT sMachineSafetyCmd.bCanLockDoor;*)
+	IF sMachineSafetyCmd.bLockDoor THEN
+		bLockLoaderDoors := TRUE;
+		bLockPearlingDoors := TRUE;
+		sMachineSafetyCmd.bLockDoor := FALSE;
+	END_IF
+	IF sMachineSafetyCmd.bUnlockDoor THEN
+		bLockLoaderDoors := FALSE;
+		bLockPearlingDoors := FALSE;
+		sMachineSafetyCmd.bUnlockDoor := FALSE;
+	END_IF
+	IF NOT bNoEmergencyStop THEN
+		bLockLoaderDoors := FALSE;
+		bLockPearlingDoors := FALSE;
+	END_IF
+ELSE
+	sMachineSafetyCmd.bCanLockDoor := FALSE;
+	sMachineSafetyCmd.bLockDoor := FALSE;
+	sMachineSafetyCmd.bCanUnlockDoor := FALSE;
+	sMachineSafetyCmd.bUnlockDoor := FALSE;
+	(* Lock doors *)
+	bLockLoaderDoors := TRUE;
+	bLockPearlingDoors := TRUE;
+END_IF
+
+bMMIEmergencyStop := NOT bNoEmergencyStop;
+bMMIDoorsPearling := NOT bPearlingDoorsLocked OR NOT bPearlingDoorsClosed;
+bMMIDoorsLoader := NOT bLoaderDoorsLocked OR NOT bLoaderDoorsClosed ;
+
+(* Create blinking *)
+TBlinking(
+	bEnable			:= TRUE,
+	tOnPeriod		:= t#500ms,
+	tOffPeriod		:= t#500ms,
+	bBlink			=> bBlinking
+);
+
+(* Check error or warning state *)
+TCheckErrors(
+	bEnable			:= TRUE,
+	abErrorsTable	:= sMachineData.abErrorsTable,
+	bInError			=> bInError,
+	bInWarning		=> bInWarning,
+	iMDEAlarm		=> iMDEAlarm
+);
+
+(* Update lights *)
+bGreenLight := (eMachineMode = MM_Running) OR (eMachineMode = MM_Purging) OR
+		((eMachineMode <> MM_Stopped) AND (eMachineMode <> MM_Ready) AND bBlinking);
+bRedLight := bInError;
+bBlueLight := bInWarning;
+bOrangeLight := NOT (bLoaderDoorsLocked AND bPearlingDoorsLocked);
+
+(* Clear commands on modules *)
+eCmdLoader := MC_NoCmd;
+eCmdTable:= MC_NoCmd;
+eCmdPearling := MC_NoCmd;
+eCmdTurnOver := MC_NoCmd;
+eCmdBarrel := MC_NoCmd;
+eCmdSharpen := MC_NoCmd;
+eCmdLift1 := MC_NoCmd;
+eCmdLift2 := MC_NoCmd;
+eCmdReject := MC_NoCmd;
+eCmdVision := MC_NoCmd;
+eCmdUtilities := MC_NoCmd;
+eCmdAll := MC_NoCmd;
+
+aTModuleStatus[0] := sMachineData.sModLoader.eStatus;
+aTModuleStatus[1] := sMachineData.sModPearling.eStatus;
+aTModuleStatus[2] := sMachineData.sModTable.eStatus;
+aTModuleStatus[3] := sMachineData.sModTurnOver.eStatus;
+aTModuleStatus[4] := sMachineData.sModBarrel.eStatus;
+aTModuleStatus[5] := sMachineData.sModSharpen.eStatus;
+aTModuleStatus[6] := sMachineData.sModLift1.eStatus;
+aTModuleStatus[7] := sMachineData.sModLift2.eStatus;
+aTModuleStatus[8] := sMachineData.sModReject.eStatus;
+aTModuleStatus[9] := sMachineData.sModVision.eStatus;
+aTModuleStatus[10] := sMachineData.sModUtilities.eStatus;
+
+bOneModuleInStop := FALSE;
+bOneModuleInReady := FALSE;
+bOneModuleInPause := FALSE;
+bAllModuleInReady := TRUE;
+bAllModuleInPause := TRUE;
+bAllModuleInReadyOrStop := TRUE;
+bAllModuleInStop := TRUE;
+FOR i:=0 TO iMaxModule DO
+	IF aTModuleStatus[i] = MS_Paused THEN bOneModuleInPause := TRUE; END_IF
+	IF aTModuleStatus[i] = MS_Stopped THEN bOneModuleInStop := TRUE; END_IF
+	IF aTModuleStatus[i] = MS_Ready THEN bOneModuleInReady := TRUE; END_IF
+	IF aTModuleStatus[i] <> MS_Paused THEN bAllModuleInPause := FALSE; END_IF
+	IF aTModuleStatus[i] <> MS_Ready THEN bAllModuleInReady := FALSE; END_IF
+	IF aTModuleStatus[i] <> MS_Stopped THEN bAllModuleInStop := FALSE; END_IF
+	IF aTModuleStatus[i] <> MS_Ready AND aTModuleStatus[i] <> MS_Stopped THEN bAllModuleInReadyOrStop := FALSE; END_IF
+END_FOR
+bOneModuleInReadyOrStop := bOneModuleInStop OR bOneModuleInReady;
+
+IF (eMachineMode <> eLastMachineMode) THEN
+	eStep := SP_RunStp0;
+	eLastMachineMode := eMachineMode;
+END_IF
+
+CASE eMachineMode OF
+	MM_Stopped:
+		bAllowDoorsControl := TRUE;
+		sModeMask.bRun := FALSE;
+		sModeMask.bDashboard := FALSE;
+		sModeMask.bManual := TRUE;
+		sModeMask.bInit := bLoaderDoorsLocked AND bPearlingDoorsLocked AND NOT bInError;
+		sModeMask.bStop := FALSE;
+		sModeMask.bPurge := FALSE;
+		sModeMask.bPause := FALSE;
+		bCanChangeTool := sModeMask.bInit;
+		bDoChangeTool := FALSE;
+		IF sModeReq.bInit THEN
+			eMachineMode := MM_Init;
+		END_IF
+		IF sModeReq.bManual THEN
+			eMachineMode := MM_Manual;
+		END_IF
+		IF bChangeToolReq AND  eMachineMode = MM_Stopped AND bCanChangeTool THEN
+			bDoChangeTool := TRUE;
+			eMachineMode := MM_Init;
+		END_IF
+	MM_Init :
+		bAllowDoorsControl := FALSE;
+		sModeMask.bRun := FALSE;
+		sModeMask.bDashboard := FALSE;
+		sModeMask.bManual := FALSE;
+		sModeMask.bInit := FALSE;
+		sModeMask.bStop := FALSE;
+		sModeMask.bPurge := FALSE;
+		sModeMask.bPause := FALSE;
+		IF bDoChangeTool THEN
+			bCanChangeTool := bBlinking;
+		ELSE
+			bCanChangeTool := TRUE;
+			IF bChangeToolReq THEN
+				bDoChangeTool := TRUE;
+			END_IF
+		END_IF
+		CASE eStep OF
+			SP_RunStp0 : (* Init TurnOver / Pearling / Utilities*)
+				eCmdTurnOver := MC_Init;
+				eCmdUtilities := MC_Init;
+				eCmdPearling := MC_Init;
+				eStep := SP_RunStp1;
+			SP_RunStp1:
+				IF (sMachineData.sModTurnOver.eStatus = MS_Ready) AND (sMachineData.sModPearling.eStatus = MS_Ready) AND (sMachineData.sModUtilities.eStatus = MS_Ready) THEN
+					// Init Loader / Barrel / sharpen
+					eCmdLoader := MC_Init;
+					eCmdBarrel := MC_Init;
+					eCmdSharpen := MC_Init;
+					eCmdLift1 := MC_Init;
+					eCmdLift2 := MC_Init;
+					eCmdReject := MC_Init;
+					eStep := SP_RunStp2;
+				END_IF
+				IF (sMachineData.sModTurnOver.eStatus = MS_Stopped) OR  (sMachineData.sModPearling.eStatus = MS_Stopped) OR  (sMachineData.sModUtilities.eStatus = MS_Stopped) THEN
+					eMachineMode := MM_ForceStop;
+				END_IF
+			SP_RunStp2:
+				IF (sMachineData.sModLoader.eStatus = MS_Ready) AND (sMachineData.sModBarrel.eStatus = MS_Ready) AND (sMachineData.sModSharpen.eStatus = MS_Ready) THEN
+					eCmdTable := MC_Init;
+(*					eCmdLift1 := MC_Init;
+					eCmdLift2 := MC_Init;
+					eCmdReject := MC_Init;*)
+					eCmdVision := MC_Init;
+					eStep := SP_RunStp3;
+				END_IF
+				IF (sMachineData.sModLoader.eStatus = MS_Stopped) OR  (sMachineData.sModBarrel.eStatus = MS_Stopped) OR  (sMachineData.sModSharpen.eStatus = MS_Stopped) THEN
+					eMachineMode := MM_ForceStop;
+				END_IF
+			SP_RunStp3 : (* Leave Init *)
+				IF bAllModuleInReady THEN
+					eMachineMode := MM_Ready;
+				END_IF
+				IF bOneModuleInStop THEN
+					eMachineMode := MM_ForceStop;
+				END_IF
+		END_CASE
+	MM_Ready:
+		bAllowDoorsControl := TRUE;
+		sModeMask.bRun := bJobInProgress AND NOT bVisionInConfig;
+		sModeMask.bDashboard := TRUE;
+		sModeMask.bManual := TRUE;
+		sModeMask.bInit := FALSE;
+		sModeMask.bStop := TRUE;
+		sModeMask.bPurge := FALSE;
+		sModeMask.bPause := FALSE;
+		IF bDoChangeTool THEN
+			bCanChangeTool := bBlinking;
+		ELSE
+			bCanChangeTool := TRUE;
+			IF bChangeToolReq THEN
+				bDoChangeTool := TRUE;
+			END_IF
+		END_IF
+		IF sModeReq.bRun THEN eMachineMode := MM_Running; END_IF
+		IF sModeReq.bDashboard THEN eMachineMode := MM_Dashboard; END_IF
+		IF sModeReq.bManual THEN eMachineMode := MM_Manual; END_IF
+		IF sModeReq.bStop THEN eMachineMode := MM_ForceStop; END_IF
+		IF bOneModuleInStop THEN
+			eMachineMode := MM_ForceStop;
+		END_IF
+		IF bDoChangeTool THEN
+			IF eMachineMode = MM_Ready THEN
+				eMachineMode := MM_Dashboard;
+			ELSE
+				bDoChangeTool := FALSE;
+			END_IF
+		END_IF
+		CASE eStep OF
+			SP_RunStp0:
+				TReadyToStopTimer(IN:= FALSE);
+			SP_RunStp1:
+				TReadyToStopTimer(IN:=TRUE, PT:=t#10m);
+				IF TReadyToStopTimer.Q AND eMachineMode = MM_Ready THEN
+					eMachineMode := MM_ForceStop;
+				END_IF
+		END_CASE
+	MM_Running,MM_Purging :
+		bAllowDoorsControl := FALSE;
+		sModeMask.bRun := FALSE;
+		sModeMask.bDashboard := FALSE;
+		sModeMask.bManual := FALSE;
+		sModeMask.bInit := FALSE;
+		sModeMask.bStop := TRUE;
+		sModeMask.bPurge := (eMachineMode = MM_Running) ;
+		sModeMask.bPause := TRUE;
+		bCanChangeTool := FALSE;
+		IF sModeReq.bPause THEN eMachineMode := MM_Pausing; END_IF
+		IF sModeReq.bStop THEN eMachineMode := MM_Stopping; END_IF
+		IF sModeReq.bPurge THEN
+			eMachineMode := MM_Purging;
+			eLastMachineMode := eMachineMode;
+		END_IF
+		CASE eStep OF
+			SP_RunStp0:
+				eCmdAll := MC_Run;
+				bRunInit := TRUE;
+				eStep := SP_RunStp1;
+			SP_RunStp1:
+				IF bRunTestMode THEN
+					TManagerRunTest(
+						sRunData := sRunData,
+						bFirstCycle := bRunInit,
+						sConfigFileData := sConfigFileData,
+					);
+					bRunInit := FALSE;
+					sProductionCmd.TRequestSample.Activate := FALSE;
+					sProductionCmd.TRequestSample.Enable := FALSE;
+				ELSE
+					TManagerRun(
+						bSimPearling := bSimPearling,
+						bPurging := (eMachineMode = MM_Purging) ,
+						bFirstCycle := bRunInit,
+						sRunData := sRunData,
+						sConfigFileData := sConfigFileData,
+						sProdLot	 := sProdLot,
+						bLayeringWithTwoParts := bLayeringWithTwoParts,
+						bNewJob := bNewJobForRun,
+						sProductionCmd := sProductionCmd,
+						bDisableCleanAfterPearling := bDisableCleanAfterPearling
+					);
+					bRunInit := FALSE;
+					bNewJobForRun := FALSE;
+					IF bOneModuleInPause OR bOneModuleInReadyOrStop THEN
+						bComputeMTBF := TRUE;
+					END_IF
+				END_IF
+				IF bOneModuleInPause THEN eMachineMode := MM_Pausing; END_IF
+				IF bOneModuleInReadyOrStop THEN eMachineMode := MM_Stopping; END_IF
+				IF NOT bRunTestMode AND TManagerRun.bRecipeIsFinish THEN eMachineMode := MM_Stopping; END_IF
+		END_CASE
+	MM_Dashboard:
+		bAllowDoorsControl := TRUE;
+		sModeMask.bRun := FALSE;
+		sModeMask.bDashboard := FALSE;
+		sModeMask.bManual := FALSE;
+		sModeMask.bInit := FALSE;
+		sModeMask.bStop := TRUE;
+		sModeMask.bPurge := FALSE;
+		sModeMask.bPause := FALSE;
+		IF bDoChangeTool THEN
+			bCanChangeTool := bBlinking;
+		ELSE
+			bCanChangeTool := TRUE;
+			IF bChangeToolReq THEN
+				bDoChangeTool := TRUE;
+			END_IF
+		END_IF
+		IF sModeReq.bStop THEN eMachineMode := MM_Stopping; END_IF
+		CASE eStep OF
+			SP_RunStp0:
+				eCmdAll := MC_Run;
+				eStep := SP_RunStp1;
+			SP_RunStp1:
+				IF bOneModuleInPause THEN eMachineMode := MM_Pausing; END_IF
+				IF bOneModuleInReadyOrStop THEN eMachineMode := MM_Stopping; END_IF
+		END_CASE
+		IF eMachineMode <> MM_Dashboard THEN bDoChangeTool := FALSE; END_IF
+	MM_Manual :
+		bAllowDoorsControl := TRUE;
+		sModeMask.bRun := FALSE;
+		sModeMask.bDashboard := FALSE;
+		sModeMask.bManual := FALSE;
+		sModeMask.bInit := bLoaderDoorsLocked AND bPearlingDoorsLocked AND NOT bInError;
+		sModeMask.bStop := TRUE;
+		sModeMask.bPurge := FALSE;
+		sModeMask.bPause := FALSE;
+		bCanChangeTool := FALSE;
+		IF sModeReq.bStop THEN eMachineMode := MM_Stopping; END_IF
+		IF sModeReq.bInit THEN
+			eMachineMode := MM_Stopping;
+			bDoInitAfterStop := TRUE;
+		END_IF
+		CASE eStep OF
+			SP_RunStp0:
+				eCmdAll := MC_Manual;
+				eStep := SP_RunStp1;
+			SP_RunStp1:
+				eStep := SP_RunStp1;
+		END_CASE;
+	MM_Stopping:
+		bAllowDoorsControl := FALSE;
+		sModeMask.bRun := FALSE;
+		sModeMask.bDashboard := FALSE;
+		sModeMask.bManual := FALSE;
+		sModeMask.bInit := FALSE;
+		sModeMask.bStop := TRUE;
+		sModeMask.bPurge := FALSE;
+		sModeMask.bPause := FALSE;
+		bCanChangeTool := FALSE;
+		CASE eStep OF
+			SP_RunStp0:
+				TForceStop(IN := FALSE);
+				eStep := SP_RunStp1;
+			SP_RunStp1:
+				TForceStop(IN := TRUE, PT := TMaxStopppingTime);
+				IF bAllModuleInReady THEN
+					IF TManagerRun.bRecipeIsFinish THEN
+						eMachineMode := MM_Stopped;
+						eCmdUtilities := MC_Stop;
+					ELSE
+						eMachineMode := MM_Ready;
+					END_IF
+					bDoInitAfterStop := FALSE;
+				ELSIF bAllModuleInReadyOrStop AND bOneModuleInStop THEN
+					IF bDoInitAfterStop AND bLoaderDoorsLocked AND bPearlingDoorsLocked AND NOT bInError THEN
+						eMachineMode := MM_Init;
+					ELSE
+						eMachineMode := MM_Stopped;
+					END_IF
+					bDoInitAfterStop := FALSE;
+				ELSIF TForceStop.Q OR sModeReq.bStop  THEN
+					eMachineMode := MM_ForceStop;
+				END_IF
+		END_CASE;
+	MM_ForceStop:
+		bAllowDoorsControl := FALSE;
+		sModeMask.bRun := FALSE;
+		sModeMask.bDashboard := FALSE;
+		sModeMask.bManual := FALSE;
+		sModeMask.bInit := FALSE;
+		sModeMask.bStop := FALSE;
+		sModeMask.bPurge := FALSE;
+		sModeMask.bPause := FALSE;
+		bCanChangeTool := FALSE;
+		CASE eStep OF
+			SP_RunStp0:
+				eCmdAll := MC_Stop;
+				eStep := SP_RunStp1;
+			SP_RunStp1:
+				IF bAllModuleInStop THEN
+					IF bDoInitAfterStop AND bLoaderDoorsLocked AND bPearlingDoorsLocked AND NOT bInError THEN
+						eMachineMode := MM_Init;
+					ELSE
+						eMachineMode := MM_Stopped;
+					END_IF
+					bDoInitAfterStop := FALSE;
+				END_IF
+		END_CASE;
+	MM_Pausing:
+		bAllowDoorsControl := FALSE;
+		sModeMask.bRun := FALSE;
+		sModeMask.bDashboard := FALSE;
+		sModeMask.bManual := FALSE;
+		sModeMask.bInit := FALSE;
+		sModeMask.bStop := TRUE;
+		sModeMask.bPurge := FALSE;
+		sModeMask.bPause := FALSE;
+		bCanChangeTool := FALSE;
+		CASE eStep OF
+			SP_RunStp0:
+				TForceStop(IN := FALSE);
+				eStep := SP_RunStp1;
+			SP_RunStp1:
+				TForceStop(IN := TRUE, PT := TMaxPausingTime);
+				IF bAllModuleInPause THEN
+					eMachineMode := MM_Pause;
+				ELSIF TForceStop.Q OR sModeReq.bStop OR bOneModuleInReadyOrStop  THEN
+					eMachineMode := MM_Stopping;
+				END_IF
+		END_CASE;
+	MM_Pause:
+		bAllowDoorsControl := TRUE;
+		sModeMask.bRun := TRUE;
+		sModeMask.bDashboard := FALSE;
+		sModeMask.bManual := TRUE;
+		sModeMask.bInit := FALSE;
+		sModeMask.bStop := TRUE;
+		sModeMask.bPurge := FALSE;
+		sModeMask.bPause := FALSE;
+		bCanChangeTool := FALSE;
+		IF sModeReq.bRun THEN eMachineMode := MM_Running; END_IF
+		IF sModeReq.bManual THEN eMachineMode := MM_Manual; END_IF
+		IF sModeReq.bStop THEN eMachineMode := MM_Stopping; END_IF
+		IF bOneModuleInReadyOrStop THEN
+			eMachineMode := MM_Stopping;
+		END_IF
+END_CASE;
+
+TManagerDashboard(
+	bExecute := eMachineMode = MM_Dashboard AND eLastMachineMode = eMachineMode AND eStep = SP_RunStp1,
+	sRunData := sRunData,
+	bDoChangeTool := bDoChangeTool,
+	sConfigFileData := sConfigFileData,
+	sCmd := sDashboardCmd
+);
+
+bInJobMode := ((eMachineMode = MM_Running) OR (eMachineMode = MM_Purging)) AND eLastMachineMode = eMachineMode AND eStep = SP_RunStp1 AND NOT bRunTestMode;
+TJobElapsedCounter(
+	bRun := bInJobMode,
+	bReset := FALSE,
+	bSet := FALSE
+	);
+TMTBFCounter(
+	bStart := bInJobMode,
+	bReset := FALSE
+	);
+IF bComputeMTBF THEN
+	bComputeMTBF := FALSE;
+	iMTBFCounter := iMTBFCounter + 1;
+	dwMTBFTotalTime := dwMTBFTotalTime + TMTBFCounter.dwSeconds;
+	TMTBFCounter(
+		bReset := TRUE
+		);
+END_IF
+IF bResetMTBF THEN
+	bResetMTBF := FALSE;
+	dwMTBFTotalTime := 0;
+	iMTBFCounter := 0;
+END_IF
+IF iMTBFCounter > 0 THEN
+	dwMeanMTBF := dwMTBFTotalTime / INT_TO_DWORD(iMTBFCounter);
+ELSE
+	dwMeanMTBF := 0;
+END_IF
+
+(* Running time counters *)
+TMachineOnCounter(bStart := TRUE, bReset := bResetMachineCounters);
+TInProdCounter(bStart := (eMachineMode = MM_Running) OR (eMachineMode = MM_Purging), bReset := bResetMachineCounters);
+
+(* Clear  mode requests *)
+sModeReq.bStop := FALSE;
+sModeReq.bInit := FALSE;
+sModeReq.bManual := FALSE;
+sModeReq.bRun := FALSE;
+sModeReq.bPurge := FALSE;
+sModeReq.bPause := FALSE;
+sModeReq.bDashboard := FALSE;
+
+
+IF eCmdAll<> MC_NoCmd THEN
+	eCmdLoader := eCmdAll;
+	eCmdTable:= eCmdAll;
+	eCmdPearling := eCmdAll;
+	eCmdTurnOver := eCmdAll;
+	eCmdBarrel := eCmdAll;
+	eCmdSharpen := eCmdAll;
+	eCmdLift1 := eCmdAll;
+	eCmdLift2 := eCmdAll;
+	eCmdReject := eCmdAll;
+	eCmdVision := eCmdAll;
+	eCmdUtilities := eCmdAll;
+END_IF
+
+TWritePersistentData(
+	PORT    := 852,
+	START := bSavePersistent,
+	MODE    := SPDM_2PASS
+);
+
+IF bNewJob  THEN
+	bJobInProgress := TRUE;
+	bNewJobForRun := TRUE;
+	TJobElapsedCounter(
+		bRun := FALSE,
+		bReset := FALSE,
+		bSet := TRUE,
+		tSetTime := DWORD_TO_TIME(dwStartJobElapsedTime)
+	);
+END_IF
+IF bEndOfJob THEN
+	bJobInProgress := FALSE;
+	TJobElapsedCounter(
+		bRun := FALSE,
+		bReset := TRUE,
+		bSet := FALSE
+	);
+END_IF
+TJobElapsed := TJobElapsedCounter.TElapsed;
+
+dwJobQty := sProdLot.dLotQty;
+IF eMachineMode = MM_Purging THEN
+	IF C_PROD_MODE_GOOD_PART THEN
+		dwJobQty := sProdLot.dGoodQty + (sProdLot.dLoadedQty - sProdLot.dProdQty);
+	ELSE
+		dwJobQty := sProdLot.dLoadedQty;
+	END_IF
+END_IF
+
+IF sProdLot.dEstimatedPartTime*dwJobQty > TIME_TO_DWORD(TJobElapsed) THEN
+	dwProdEstimatedTimeLeft := sProdLot.dEstimatedPartTime*dwJobQty - TIME_TO_DWORD(TJobElapsed);
+ELSE
+	dwProdEstimatedTimeLeft := 0;
+END_IF
+
+IF NOT TWritePersistentData.BUSY AND bSavePersistent THEN
+	bSavePersistent := FALSE;
+END_IF
+
+IF eMachineMode <> MM_Running AND  eMachineMode <> MM_Purging THEN
+	sProductionCmd.TRequestSample.Enable := FALSE;
+	sProductionCmd.TRequestSample.Activate := FALSE;
+END_IF
+
+
+IF eMachineMode = MM_Dashboard THEN
+	eManagerRunStep := TManagerDashboard.eManagerStep;
+ELSE
+	IF bRunTestMode THEN
+		eManagerRunStep := TManagerRunTest.eManagerStep;
+	ELSE
+		eManagerRunStep := TManagerRun.eManagerStep;
+	END_IF
+END_IF
+
+bReadyForChangeJob := (eMachineMode = MM_Stopped);
+bStopRequest := (eMachineMode = MM_Stopping);
+bPauseRequest := (eMachineMode = MM_Pausing);
+bPearlingHead1IsUsed := (sConfigFileData.asPearlingData[PS_SUS].THead[PH_Left].nNbOfPearls > 0) OR (sConfigFileData.asPearlingData[PS_SOUS].THead[PH_Left].nNbOfPearls > 0);
+bPearlingHead2IsUsed := (sConfigFileData.asPearlingData[PS_SUS].THead[PH_Right].nNbOfPearls > 0) OR (sConfigFileData.asPearlingData[PS_SOUS].THead[PH_Right].nNbOfPearls > 0);
+bLayeringWithTwoParts := ((sConfigFileData.sPartData.alrPartOffsetLayering[1].lrX <> 0) OR (sConfigFileData.sPartData.alrPartOffsetLayering[1].lrY <> 0));
+bConfigError := TManagerRun.bConfigError;
+
+(* MDE option *)
+IF bFillMDE THEN
+	(* Update MDE *)
+	TMDEData.dwPceGood := sMachineData.sCounter.sProd.dGood;
+	TMDEData.dwPceBad := sMachineData.sCounter.sProd.dTotal  - TMDEData.dwPceGood;
+	
+	(* MDE status *)
+	IF bInError THEN
+		TMDEData.iStatus := MDE_Alarm;
+	ELSIF (eMachineMode = MM_Running) THEN
+		TMDEData.iStatus := MDE_Production;
+	ELSIF (eMachineMode = MM_Manual) THEN
+		TMDEData.iStatus := MDE_Maintenance;
+	ELSE
+		TMDEData.iStatus := MDE_Standby;
+	END_IF
+	(* MDE alarm *)
+	TMDEData.iPertCode := iMDEAlarm;
+END_IF]]></ST>
+    </Implementation>
+    <LineIds Name="Manager">
+      <LineId Id="124" Count="152" />
+      <LineId Id="825" Count="0" />
+      <LineId Id="279" Count="0" />
+      <LineId Id="829" Count="0" />
+      <LineId Id="280" Count="1" />
+      <LineId Id="830" Count="0" />
+      <LineId Id="828" Count="0" />
+      <LineId Id="831" Count="1" />
+      <LineId Id="966" Count="2" />
+      <LineId Id="833" Count="0" />
+      <LineId Id="283" Count="5" />
+      <LineId Id="834" Count="0" />
+      <LineId Id="289" Count="0" />
+      <LineId Id="293" Count="3" />
+      <LineId Id="838" Count="1" />
+      <LineId Id="835" Count="2" />
+      <LineId Id="299" Count="402" />
+    </LineIds>
+  </POU>
+</TcPlcObject>

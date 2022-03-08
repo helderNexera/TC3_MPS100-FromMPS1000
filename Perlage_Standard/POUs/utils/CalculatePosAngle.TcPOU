@@ -1,0 +1,25 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<TcPlcObject Version="1.1.0.1" ProductVersion="3.1.4022.12">
+  <POU Name="CalculatePosAngle" Id="{2a22d496-cc99-4e1b-8eeb-c65ce7ebc0f1}" SpecialFunc="None">
+    <Declaration><![CDATA[FUNCTION_BLOCK CalculatePosAngle
+VAR_INPUT
+	X1			: LREAL;
+	X2			: LREAL;
+	Y1			: LREAL;
+	Y2			: LREAL;
+END_VAR
+VAR_OUTPUT
+	alrResult		: ARRAY[0..2] OF LREAL;
+END_VAR
+VAR
+END_VAR]]></Declaration>
+    <Implementation>
+      <ST><![CDATA[alrResult[0] := X1;
+alrResult[1] := Y1;
+alrResult[2] := RAD_TO_DEG(ATAN((Y2-Y1)/(X2-X1)));]]></ST>
+    </Implementation>
+    <LineIds Name="CalculatePosAngle">
+      <LineId Id="12" Count="2" />
+    </LineIds>
+  </POU>
+</TcPlcObject>

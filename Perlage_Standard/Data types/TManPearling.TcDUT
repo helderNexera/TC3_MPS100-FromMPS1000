@@ -1,0 +1,44 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<TcPlcObject Version="1.1.0.1" ProductVersion="3.1.4022.12">
+  <DUT Name="TManPearling" Id="{32307205-3716-47ef-a037-bf58ad2e495a}">
+    <Declaration><![CDATA[{attribute 'pack_mode' := '1'}
+TYPE TManPearling :
+STRUCT
+	e_TeachPos					: TPearlingTeachPos;
+	eTableSide					: TTableSide;
+	bAxisZSafe					: ARRAY[0..1] OF BOOL;
+	aiMotorSpeed				: ARRAY[0..1] OF INT;
+	arMotorCurrent				: ARRAY[0..1] OF REAL;
+	adwMotorRunningHours		: ARRAY[0..1] OF DWORD;
+	adwSpindleRunningHours		: ARRAY[0..1] OF DWORD;
+	aTAxis						: ARRAY[0..3] OF TManDrive;
+	aTAxisPos					: ARRAY[0..3] OF TManDrivePos;
+	aTStartMotor				: ARRAY[0..1] OF TManButton;
+	aTOpenChuck					: ARRAY[0..1] OF TManButton;
+	aTEjectStick				: ARRAY[0..1] OF TManButton;
+	aTActivateBlowing			: ARRAY[0..1] OF TManButton;
+	TSafe						: TManButton;
+	aTCalibrateWeight			: ARRAY[0..1] OF TManButton;
+	TResetMotorUseTime			: ARRAY[0..1] OF TManButton;
+	TResetSpindleUseTime		: ARRAY[0..1] OF TManButton;
+	lrWeightStepOnZ				: LREAL;
+	alrWeightTableLeft			: ARRAY[0..C_WEIGHT_TABLE_MAX] OF LREAL;
+	alrWeightTableRight			: ARRAY[0..C_WEIGHT_TABLE_MAX] OF LREAL;
+	bWeightTableLeftValid		: BOOL;
+	bWeightTableRightValid		: BOOL;
+	TActivateAspirationTable	: ARRAY[0..1] OF TManButton;
+	TActivateAspirationSharpen	: TManButton;
+	aiSpindleSpeedSetpoint		: ARRAY[0..1] OF INT;
+	iCurrentMotorMinTh			: INT;
+	iCurrentMotorWarnTh			: INT;
+	iCurrentMotorMaxTh			: INT;
+	aiMotorStartedTimeout		: ARRAY[0..1] OF INT;
+	aiMotorStoppedTimeout		: ARRAY[0..1] OF INT;
+	alrRatiog2mm				: ARRAY[0..1] OF LREAL;
+	aiDistanceSensor			: ARRAY[0..1] OF INT;
+	iWeightSensor				: INT;
+	adwPearlsCounter			: ARRAY[0..1] OF DWORD;
+END_STRUCT
+END_TYPE]]></Declaration>
+  </DUT>
+</TcPlcObject>

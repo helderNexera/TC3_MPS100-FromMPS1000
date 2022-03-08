@@ -1,0 +1,16 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<TcPlcObject Version="1.1.0.1" ProductVersion="3.1.4022.12">
+  <DUT Name="TLoaderModulePos" Id="{701dde63-f214-41af-9d55-1b74eab76bea}">
+    <Declaration><![CDATA[TYPE TLoaderModulePos :
+	(
+			LMP_Reject :=0,
+			LMP_Lift1,
+			LMP_Lift2,
+			LMP_Table,
+			LMP_TurnOverFix,
+			LMP_TurnOverArm,
+			LMP_Sample
+	);
+END_TYPE]]></Declaration>
+  </DUT>
+</TcPlcObject>

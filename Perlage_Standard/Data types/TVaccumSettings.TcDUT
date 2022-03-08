@@ -1,0 +1,13 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<TcPlcObject Version="1.1.0.1" ProductVersion="3.1.4022.12">
+  <DUT Name="TVaccumSettings" Id="{4e66a1cc-973d-4685-999d-54c587867ba8}">
+    <Declaration><![CDATA[{attribute 'pack_mode' := '1'}
+TYPE TVaccumSettings :
+STRUCT
+	iBlowing				: INT;
+	iWaitWhenVacuumOk	: INT;
+	iErrorDelay			: INT;
+END_STRUCT
+END_TYPE]]></Declaration>
+  </DUT>
+</TcPlcObject>

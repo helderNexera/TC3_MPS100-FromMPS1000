@@ -1,0 +1,19 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<TcPlcObject Version="1.1.0.1" ProductVersion="3.1.4022.12">
+  <DUT Name="TManDrive" Id="{a734857d-bbdb-46ca-9b13-b3ba2efdcb66}">
+    <Declaration><![CDATA[{attribute 'pack_mode' := '1'}
+TYPE TManDrive :
+	STRUCT
+		CurrentPos		: LREAL;
+		JogStep			: LREAL;
+		Specific			: TManButton;
+		ServoON		: TManButton;
+		Home			: TManButton;
+		MoveFw			: TManButton;
+		MoveBw			: TManButton;
+		UseHours		: DWORD;
+		ResetUseTime	: TManButton;
+	END_STRUCT
+END_TYPE]]></Declaration>
+  </DUT>
+</TcPlcObject>

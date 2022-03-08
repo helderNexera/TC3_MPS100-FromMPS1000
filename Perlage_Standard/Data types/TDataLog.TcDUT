@@ -1,0 +1,13 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<TcPlcObject Version="1.1.0.1" ProductVersion="3.1.4022.12">
+  <DUT Name="TDataLog" Id="{f452e1b3-de59-44b0-b8e2-6cf396229b53}">
+    <Declaration><![CDATA[{attribute 'pack_mode' := '1'}
+TYPE TDataLog :
+STRUCT
+	bPartReady			: BOOL;
+	bEndOfProd			: BOOL;
+	sPartStatus			: TPartData;
+END_STRUCT
+END_TYPE]]></Declaration>
+  </DUT>
+</TcPlcObject>

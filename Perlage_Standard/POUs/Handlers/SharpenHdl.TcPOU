@@ -1,0 +1,280 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<TcPlcObject Version="1.1.0.1" ProductVersion="3.1.4022.12">
+  <POU Name="SharpenHdl" Id="{cab6b4a9-364c-4709-b82e-2da941584151}" SpecialFunc="None">
+    <Declaration><![CDATA[FUNCTION_BLOCK SharpenHdl
+
+(*
+	Description 	: Bloc fonction de gestion de l'affutage
+	Auteur		: GRM
+	Date		: 26.03.2014
+	Version		: 1.00
+
+	Modifications : 
+
+*)
+
+VAR_INPUT
+	bEnable						: BOOL;
+	bPowerOn					: BOOL;
+	bResetErrors					: BOOL;
+	bStopReq					: BOOL;
+	bPauseReq					: BOOL;
+	bPosTensioner				: BOOL;
+	eCommand					: TModuleCommands;
+	eRunCommand				: TRunCmdSharpen;
+END_VAR
+VAR_OUTPUT
+	bModuleError					: BOOL;
+	bSharpenAxisError			: BOOL;
+	bNoTapeError				: BOOL;
+	eRunStatus					: TRunStatus;
+END_VAR
+VAR_IN_OUT
+	sSharpenAxis					: AXIS_REF;
+	sSharpenEncoder				: AXIS_REF;
+	sCurrentState					: TModuleData;
+	TManualCmd					: TManSharpen;
+END_VAR
+VAR PERSISTENT
+	lrSharpenMovePos			: LREAL					:= 10;
+END_VAR
+VAR CONSTANT
+END_VAR
+VAR
+	lrSharpenTargetPos			: LREAL;
+	eMoveSharpenAxisCommand	: TAxisCommands	:= AC_None;
+	eMoveSharpenEncCommand	: TAxisCommands	:= AC_None;
+	TSharpenAxis				: StdAxis;
+	TSharpenEncoder				: StdAxis;
+(*	eSaveStep					: TModuleSteps;*)
+	lrCurrentSharpenMoveSpeed	: LREAL;
+	DummyServoOn				: TManButton;
+	TCheckNoTape				: TON;
+END_VAR]]></Declaration>
+    <Implementation>
+      <ST><![CDATA[IF (NOT sCurrentState.bStepMode) THEN
+	sCurrentState.bWaitStep := FALSE;
+END_IF
+
+CASE eCommand OF
+	MC_NoCmd :
+		CASE sCurrentState.eStatus OF
+			MS_Init :
+				IF bEnable THEN
+				CASE sCurrentState.eStep OF
+					SP_InitStp1 : (* Init all synchros *)
+						lrSharpenTargetPos := lrSharpenMovePos;
+						sCurrentState.eStep := SP_InitStp2;
+					SP_InitStp2 : (* Init sharpen tape axis *)
+						eMoveSharpenAxisCommand := AC_Init;
+						sCurrentState.eStep := SP_InitStp3;
+					SP_InitStp3 :
+						IF TSharpenAxis.eCurrentState = AS_InPosition THEN
+							eMoveSharpenEncCommand := AC_ClearPosition;
+							sCurrentState.eStep := SP_InitStp99;
+						END_IF
+					SP_InitStp99 : (* Leave Init *)
+						sCurrentState.eStep := SP_RunStp1;
+						sCurrentState.eStatus := MS_Ready;
+						sCurrentState.bInitDone := TRUE;
+				END_CASE
+				ELSE
+					sCurrentState.eStatus := MS_Ready;
+					sCurrentState.bInitDone := TRUE;
+				END_IF
+			MS_Running :
+				IF bEnable AND  (NOT sCurrentState.bWaitStep) THEN
+					CASE sCurrentState.eStep OF
+						SP_RunStp1 :(* Wait request *)
+							eRunStatus := RS_WaitRequest;
+							CASE eRunCommand OF
+								RCS_None:
+									IF bStopReq  THEN
+										sCurrentState.eStatus := MS_Ready;
+									ELSIF bPauseReq  THEN
+										sCurrentState.eStatus := MS_Paused;
+									END_IF
+								RCS_MoveStep:
+									sCurrentState.eStep := SP_RunStp10;
+							END_CASE
+							IF sCurrentState.eStep<> SP_RunStp1 THEN eRunStatus := RS_ProcessRequest1; END_IF
+						SP_RunStp10 : (* Move one step *)
+							eMoveSharpenAxisCommand := AC_MoveAtSpeed;
+							TCheckNoTape(in := FALSE);
+							sCurrentState.eStep := SP_RunStp11;
+						SP_RunStp11 :
+							TCheckNoTape(in := TRUE,pt := t#10s);
+							IF (TSharpenEncoder.lrCurrentPos > lrSharpenMovePos) THEN
+								eMoveSharpenAxisCommand := AC_Stop;
+								sCurrentState.eStep := SP_RunStp12;
+							ELSIF TCheckNoTape.Q THEN
+								bNoTapeError := TRUE;
+							END_IF
+						SP_RunStp12 :
+							IF (TSharpenAxis.eCurrentState = AS_InPosition) THEN
+								eMoveSharpenEncCommand := AC_ClearPosition;
+								sCurrentState.eStep := SP_RunStp1;
+							END_IF
+					END_CASE
+				END_IF
+			MS_Manual :
+				TManualCmd.TSharpenAxis.Home.Enable := (TSharpenAxis.eCurrentState = AS_InPosition) OR (TSharpenAxis.eCurrentState = AS_NotHomed);
+				TManualCmd.TSharpenAxis.MoveFw.Enable := TSharpenAxis.eCurrentState = AS_InPosition AND NOT bPosTensioner;
+				TManualCmd.TSharpenAxis.CurrentPos := TSharpenAxis.lrCurrentPos;
+				TManualCmd.bTapeNotEmpty := NOT bPosTensioner;
+				TManualCmd.TMove2NextTapePos.Enable :=  TManualCmd.TSharpenAxis.MoveFw.Enable;
+				CASE sCurrentState.eStep OF
+					SP_ManualStp0 :
+						 TManualCmd.lrStep := lrSharpenMovePos;
+						TManualCmd.TSharpenAxis.JogStep := lrSharpenMovePos;
+						TManualCmd.TSharpenAxis.MoveFw.Activate := FALSE;
+						TManualCmd.TSharpenAxis.MoveBw.Activate := FALSE;
+						TManualCmd.TSharpenAxis.Home.Activate := FALSE;
+						TManualCmd.TMove2NextTapePos.Activate := FALSE;
+						TManualCmd.TSharpenAxis.MoveBw.Enable := FALSE;
+						sCurrentState.eStep := SP_ManualStp1;
+					SP_ManualStp1 :
+						IF bStopReq THEN
+							sCurrentState.eStatus := MS_Stopped;
+						ELSE
+							IF TManualCmd.TMove2NextTapePos.Activate THEN
+								lrSharpenTargetPos := lrSharpenMovePos;
+								sCurrentState.eStep := SP_ManualStp10;
+							END_IF
+							IF (lrSharpenMovePos <> TManualCmd.lrStep) THEN
+								lrSharpenMovePos :=  TManualCmd.lrStep;
+							END_IF
+							IF TManualCmd.TSharpenAxis.MoveFw.Activate THEN
+								lrSharpenTargetPos := TManualCmd.TSharpenAxis.JogStep;
+								sCurrentState.eStep := SP_ManualStp10;
+							END_IF
+							IF TManualCmd.TSharpenAxis.Home.Activate AND sCurrentState.eStep = SP_ManualStp1 THEN
+								sCurrentState.eStep := SP_ManualStp20;
+							END_IF
+						END_IF
+					SP_ManualStp10: (* Do the movement *)
+						eMoveSharpenAxisCommand := AC_MoveAtSpeed;
+						TCheckNoTape(in := FALSE);
+						sCurrentState.eStep := SP_ManualStp11;
+					SP_ManualStp11 :
+						TCheckNoTape(in := TRUE,pt := t#10s);
+						IF (TSharpenEncoder.lrCurrentPos > lrSharpenMovePos) THEN
+							eMoveSharpenAxisCommand := AC_Stop;
+							sCurrentState.eStep := SP_ManualStp12;
+						ELSIF TCheckNoTape.Q THEN
+							bNoTapeError := TRUE;
+							sCurrentState.eStep := SP_ManualStp12;
+						END_IF
+					SP_ManualStp12 :(* Wait until position is reached *)
+						CASE TSharpenAxis.eCurrentState OF
+							AS_InPosition, AS_InError:
+								eMoveSharpenEncCommand := AC_ClearPosition;
+								TManualCmd.TMove2NextTapePos.Activate := FALSE;
+								TManualCmd.TSharpenAxis.MoveFw.Activate := FALSE;
+								sCurrentState.eStep := SP_ManualStp1;
+						END_CASE
+					SP_ManualStp20 : (* Init sharpen tape axis *)
+						eMoveSharpenAxisCommand := AC_Home;
+						sCurrentState.eStep := SP_ManualStp21;
+					SP_ManualStp21 : (* Wait init done *)
+						CASE TSharpenAxis.eCurrentState OF
+							AS_InPosition, AS_InError:
+								TManualCmd.TSharpenAxis.Home.Activate := FALSE;
+								sCurrentState.eStep := SP_ManualStp1;
+						END_CASE
+				END_CASE
+			MS_Paused:
+				IF bStopReq THEN
+					sCurrentState.eStatus := MS_Ready;
+				END_IF
+		END_CASE
+	MC_Init :
+		IF sCurrentState.bInitDone  THEN
+			sCurrentState.eStep := SP_InitStp99;
+		ELSE
+			sCurrentState.eStep := SP_InitStp1;
+		END_IF
+		sCurrentState.eStatus := MS_Init;
+	MC_Run :
+		sCurrentState.eStatus := MS_Running;
+	MC_Manual :
+		sCurrentState.bInitDone := FALSE;
+		sCurrentState.eStatus := MS_Manual;
+		sCurrentState.eStep := SP_ManualStp0;
+	MC_Stop :
+		sCurrentState.eStatus := MS_Stopped;
+END_CASE;
+
+IF bResetErrors THEN
+	bNoTapeError := FALSE;
+	sCurrentState.bInError := FALSE;
+END_IF
+
+IF bPosTensioner THEN
+	bNoTapeError 	:= TRUE;
+END_IF
+
+IF bNoTapeError AND TSharpenAxis.eCurrentState = AS_Moving  THEN
+	eMoveSharpenAxisCommand := AC_ForceStop;
+END_IF
+
+(* Sharpen Axis *)
+IF (sCurrentState.eStatus = MS_Manual) THEN
+	lrCurrentSharpenMoveSpeed := TSharpenAxis.lrManualSpeed;
+ELSE
+	lrCurrentSharpenMoveSpeed := TSharpenAxis.lrRunningSpeed;
+END_IF
+TSharpenAxis(
+	eCommand		:= eMoveSharpenAxisCommand ,
+	lrTargetPos		:= lrSharpenTargetPos ,
+	lrTargetSpeed	:= lrCurrentSharpenMoveSpeed ,
+	bResetErrors		:= bResetErrors ,
+	bPowerIsOn		:= bPowerOn ,
+	eHomingAxisType:= AHT_NoHoming ,
+	bNegLimitSwitch	:= TRUE,  (* cannot go backward *)
+	sAxis			:= sSharpenAxis,
+	stServoButton 	:= TManualCmd.TSharpenAxis.ServoON
+);
+eMoveSharpenAxisCommand := AC_None;
+bSharpenAxisError := (TSharpenAxis.eCurrentState = AS_InError);
+TSharpenEncoder(
+	eCommand		:= eMoveSharpenEncCommand ,
+	lrTargetPos		:= 0 ,
+	lrTargetSpeed	:= 0 ,
+	bResetErrors		:= bResetErrors ,
+	bPowerIsOn		:= FALSE ,
+	eHomingAxisType:= AHT_NoHoming ,
+	sAxis			:= sSharpenEncoder,
+	stServoButton 	:= DummyServoOn
+);
+eMoveSharpenEncCommand := AC_None;
+
+IF NOT bEnable THEN
+	bModuleError := FALSE;
+	bSharpenAxisError := FALSE;
+	bNoTapeError := FALSE;
+END_IF
+
+IF NOT bPowerOn OR bSharpenAxisError OR bNoTapeError THEN
+	sCurrentState.bInError := TRUE;
+		IF (sCurrentState.eStatus <> MS_Manual) AND (sCurrentState.eStatus <> MS_Stopped) AND (sCurrentState.eStatus <> MS_Init) THEN
+		sCurrentState.eStatus := MS_Ready;
+	END_IF
+END_IF
+
+IF NOT bPowerOn OR bSharpenAxisError THEN
+	sCurrentState.bInitDone := FALSE;
+	IF (sCurrentState.eStatus <> MS_Manual) THEN
+		sCurrentState.eStatus := MS_Stopped;
+	END_IF
+END_IF
+
+bModuleError := sCurrentState.bInError;
+sCurrentState.bRunning := (sCurrentState.eStatus = MS_Running);
+IF (sCurrentState.eStatus <> MS_Running) THEN eRunStatus := RS_NotRunning; END_IF]]></ST>
+    </Implementation>
+    <LineIds Name="SharpenHdl">
+      <LineId Id="50" Count="219" />
+    </LineIds>
+  </POU>
+</TcPlcObject>

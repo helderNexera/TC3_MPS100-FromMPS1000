@@ -1,0 +1,2344 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<TcPlcObject Version="1.1.0.1" ProductVersion="3.1.4022.18">
+  <POU Name="ManagerRun" Id="{eb63e804-4d42-40cd-8d1f-2f41b917c636}" SpecialFunc="None">
+    <Declaration><![CDATA[
+FUNCTION_BLOCK ManagerRun
+VAR_INPUT
+	bPurging					: BOOL;
+	bFirstCycle					: BOOL;
+	bNewJob						: BOOL;
+	sConfigFileData				: TConfigFileData;
+	sProdLot					: TProductionLot;
+	bLayeringWithTwoParts		: BOOL;
+	bSimPearling				: BOOL;
+	bDisableCleanAfterPearling	: BOOL;
+END_VAR
+VAR_OUTPUT
+	bRecipeIsFinish				: BOOL;
+	bConfigError				: BOOL;
+END_VAR
+VAR_IN_OUT
+	sRunData					: TRunData;
+	sProductionCmd				: TProductionCmd;
+END_VAR
+VAR
+	i(*,j,k*)					: INT;
+	iPartOnProcess				: INT;
+	iPartOnLoader				: INT;
+	iPartOnTurnOver				: INT;
+	iPartOnTable				: INT;
+
+	iGoodPartOnProcess			: INT;
+	iGoodPartOnLoader			: INT;
+	iGoodPartOnTurnOver			: INT;
+	iGoodPartOnTable			: INT;
+
+
+	bNeedNewPart				: BOOL;
+	bLayering1IsSous			: BOOL;
+	bPearlsOnBothSide			: BOOL;
+	bPearlsOnSideSus			: BOOL;
+	bPearlsOnSideSous			: BOOL;
+(*	bDoNothing					: BOOL;*)
+	bUseTurnOver				: BOOL;
+	ePearlingTableSide			: TTableSide;
+	eWorkingTableSide			: TTableSide;
+	iLayeringPos				: INT;
+	iLayeringOffsetPos			: INT;
+	iHead						: INT;
+	iSide						: INT;
+(*	iPartSide					: INT;*)
+	iMaxLayeringOffsetPos		: INT;
+	eManagerStep				: TModuleSteps;
+	eRestartStep				: TModuleSteps;
+	eRestartLoaderStep			: TModuleSteps;
+	bReadyForPearling			: BOOL;
+(*	bReadyForTurn				: BOOL;
+	bRecoveryFinish				: BOOL;*)
+	bTableIsClean				: BOOL;
+	bPearlingFinishOnTableSide	: BOOL;
+	iRunLayering				: INT;
+	iRunLayeringOffset			: INT;
+	iStep						: INT;
+	bLastPart					: BOOL;
+	bTablePos2NeedPart			: BOOL;
+END_VAR
+(* Only for testing *)
+VAR PERSISTENT
+	bTestLift1ToLift2			: BOOL;
+	bTestLift1ToTableRotationToLift2 : BOOL;
+	bTestLift1ToTableToLift2	: BOOL;
+END_VAR
+]]></Declaration>
+    <Implementation>
+      <ST><![CDATA[sRunData.eCmdTurnOver := RCTO_None;
+sRunData.eCmdTable := RCT_None;
+sRunData.eCmdLoader := RCLo_None;
+sRunData.eCmdPearling := RCP_None;
+
+IF bFirstCycle THEN
+	(* Put here variable that need to be reset between each start of the run *)
+	eManagerStep := SP_InitStp1;
+	sProductionCmd.TRequestSample.Activate := FALSE;
+	sProductionCmd.TAutoSampling.iPeriodCnt := 0;
+	sProductionCmd.TAutoSampling.iBatchCnt := 0;
+END_IF
+
+IF bNewJob THEN
+	bReadyForPearling := FALSE;
+	eWorkingTableSide := TS_A;
+	eRestartStep := SP_RunStp1;
+	eRestartLoaderStep := SP_RunStp1;
+	sProductionCmd.TAutoSampling.iPeriodCnt := 0;
+	sProductionCmd.TAutoSampling.iBatchCnt := 0;
+END_IF
+
+IF NOT bUseASOption THEN
+	 sProductionCmd.TAutoSampling.bEnable := FALSE;
+END_IF
+
+IF NOT sProductionCmd.TAutoSampling.bEnable THEN
+	sProductionCmd.TAutoSampling.iPeriodCnt := 0;
+	sProductionCmd.TAutoSampling.iBatchCnt := 0;
+END_IF
+
+sProductionCmd.TRequestSample.Enable := NOT sProductionCmd.TAutoSampling.bEnable AND NOT sProductionCmd.TRequestSample.Activate;
+
+(* Compute some data *)
+
+IF bLayeringWithTwoParts THEN
+	iMaxLayeringOffsetPos := 1;
+ELSE
+	iMaxLayeringOffsetPos := 0;
+END_IF
+
+bPearlsOnSideSus := sConfigFileData.asPearlingData[PS_SUS].THead[PH_Left].nNbOfPearls>0 OR sConfigFileData.asPearlingData[PS_SUS].THead[PH_Right].nNbOfPearls>0 ;
+bPearlsOnSideSous := sConfigFileData.asPearlingData[PS_SOUS].THead[PH_Left].nNbOfPearls>0 OR sConfigFileData.asPearlingData[PS_SOUS].THead[PH_Right].nNbOfPearls>0 ;
+bPearlsOnBothSide := bPearlsOnSideSus AND bPearlsOnSideSous;
+IF sConfigFileData.bParallelProduction THEN
+	bLayering1IsSous := FALSE;
+ELSE
+	bLayering1IsSous := TRUE;
+END_IF
+bUseTurnOver := bPearlsOnSideSous AND bLayering1IsSous;
+
+iPartOnLoader := 0;
+iGoodPartOnLoader := 0;
+//IF sRunData.sStatusLoader = RS_WaitRequest THEN
+	FOR iHead:= LH_Head1 TO LH_Head2 DO
+		IF sRunData.TDataLoader.aTPartData[iHead].bPartPresent THEN
+			iPartOnLoader := iPartOnLoader + 1;
+			IF NOT sRunData.TDataLoader.aTPartData[iHead].bToReject THEN
+				iGoodPartOnLoader := iGoodPartOnLoader + 1;
+			END_IF
+		END_IF
+	END_FOR
+//END_IF
+
+iPartOnTable := 0;
+iGoodPartOnTable := 0;
+//IF sRunData.sStatusTable = RS_WaitRequest THEN
+	FOR iLayeringPos:= 0 TO 1 DO
+		FOR iLayeringOffsetPos:= 0 TO iMaxLayeringOffsetPos DO
+			FOR iSide:= TS_A TO TS_B DO
+				IF sRunData.TDataTable.aTPartData[iLayeringPos,iLayeringOffsetPos,iSide].bPartPresent THEN
+					iPartOnTable := iPartOnTable + 1;
+					IF NOT sRunData.TDataTable.aTPartData[iLayeringPos,iLayeringOffsetPos,iSide].bToReject THEN
+						iGoodPartOnTable := iGoodPartOnTable + 1;
+					END_IF
+				END_IF
+			END_FOR
+		END_FOR
+	END_FOR
+//END_IF
+
+iPartOnTurnOver := 0;
+iGoodPartOnTurnOver := 0;
+//IF sRunData.sStatusTurnOver = RS_WaitRequest AND bUseTurnOver THEN
+	FOR i:= TO_Arm TO TO_Fix DO
+		IF sRunData.TDataTurnOver.aTPartData[i].bPartPresent THEN
+			iPartOnTurnOver := iPartOnTurnOver + 1;
+			IF NOT sRunData.TDataTurnOver.aTPartData[i].bToReject THEN
+				iGoodPartOnTurnOver := iGoodPartOnTurnOver + 1;
+			END_IF
+		END_IF
+	END_FOR
+//END_IF
+
+iPartOnProcess := iPartOnLoader + iPartOnTurnOver + iPartOnTable;
+iGoodPartOnProcess := iGoodPartOnLoader + iGoodPartOnTurnOver + iGoodPartOnTable;
+bNeedNewPart := FALSE;
+IF C_PROD_MODE_GOOD_PART THEN
+	IF sProdLot.dGoodQty + INT_TO_DWORD(iGoodPartOnProcess) < sProdLot.dLotQty THEN
+		bNeedNewPart := TRUE;
+	END_IF
+ELSE
+	IF sProdLot.dLoadedQty < sProdLot.dLotQty THEN
+		bNeedNewPart := TRUE;
+	END_IF
+END_IF
+IF bPurging THEN
+	bNeedNewPart := FALSE;
+END_IF
+
+IF sRunData.TDataTable.eTableSide = TS_A THEN
+	ePearlingTableSide := TS_B;
+ELSE
+	ePearlingTableSide := TS_A;
+END_IF
+
+(* Part status updated *)
+
+IF bTestLift1ToLift2 THEN
+	CASE eManagerStep OF
+		SP_InitStp1:	(*Recovery, Drop plate if we have one*)
+			IF sRunData.TDataLoader.bPlatePresent THEN
+				sRunData.eCmdLoader := RCLo_SwitchPlate;
+				eManagerStep := SP_InitStp2;
+			ELSE
+				eManagerStep := SP_InitStp3;
+			END_IF
+		SP_InitStp2: (* Switch plate done *)
+			IF sRunData.sStatusLoader = RS_WaitRequest THEN
+				eManagerStep := SP_InitStp3;
+			END_IF
+		SP_InitStp3: (* Do we need a table turn ? *)
+			IF  sRunData.TDataTable.eTableSide <>  eWorkingTableSide THEN
+				sRunData.eCmdTable := RCT_Turn;
+				eManagerStep := SP_InitStp4;
+			ELSE
+				eManagerStep := SP_InitStp5;
+			END_IF
+		SP_InitStp4:
+				IF sRunData.sStatusTable = RS_WaitRequest THEN
+					eManagerStep := SP_InitStp5;
+				END_IF
+		SP_InitStp5:
+			IF sRunData.TDataLoader.aTPartData[LH_Head1].bPartPresent OR sRunData.TDataLoader.aTPartData[LH_Head2].bPartPresent THEN
+				eManagerStep := eRestartLoaderStep;
+			ELSE
+				eManagerStep := eRestartStep;
+			END_IF
+(* Running Step *)
+		SP_RunStp1:
+			eRestartStep := SP_RunStp1;
+			eRestartLoaderStep := SP_RunStp1;
+			eManagerStep := SP_RunStp10;
+		SP_RunStp10:
+			(* Take part on head 1 from loader *)
+			IF sRunData.TDataLoader.aTPartData[LH_Head1].bPartPresent THEN
+				eManagerStep := SP_RunStp20;
+			ELSE
+				sRunData.TDataLoader.eModule := LMP_Lift1;
+				sRunData.TDataLoader.eTaker := LH_Head1;
+				sRunData.eCmdLoader := RCLo_PrepareTakePart;
+				eManagerStep := SP_RunStp11;
+			END_IF
+		SP_RunStp11:
+			IF sRunData.sStatusLoader = RS_WaitRequest THEN
+				sRunData.eCmdLoader := RCLo_TakePart;
+				eManagerStep := SP_RunStp12;
+			END_IF
+		SP_RunStp12:
+			IF sRunData.sStatusLoader = RS_WaitRequest THEN
+				eManagerStep := SP_RunStp20;
+			END_IF
+		SP_RunStp20:
+			(* Take part on head 2 from loader *)
+			IF sRunData.TDataLoader.aTPartData[LH_Head2].bPartPresent THEN
+				eManagerStep := SP_RunStp30;
+			ELSE
+				sRunData.TDataLoader.eModule := LMP_Lift1;
+				sRunData.TDataLoader.eTaker := LH_Head2;
+				sRunData.eCmdLoader := RCLo_PrepareTakePart;
+				eManagerStep := SP_RunStp21;
+			END_IF
+		SP_RunStp21:
+				IF sRunData.sStatusLoader = RS_WaitRequest THEN
+				sRunData.eCmdLoader := RCLo_TakePart;
+				eManagerStep := SP_RunStp22;
+			END_IF
+		SP_RunStp22:
+			IF sRunData.sStatusLoader = RS_WaitRequest THEN
+				eManagerStep := SP_RunStp30;
+			END_IF
+		SP_RunStp30:
+			(* Drop part from head 1 to unloader *)
+			sRunData.TDataLoader.eModule := LMP_Lift2;
+			sRunData.TDataLoader.eTaker := LH_Head1;
+			sRunData.eCmdLoader := RCLo_PrepareDropPart;
+			eManagerStep := SP_RunStp31;
+		SP_RunStp31:
+			IF sRunData.sStatusLoader = RS_WaitRequest THEN
+				sRunData.eCmdLoader := RCLo_GivePart;
+				eManagerStep := SP_RunStp32;
+			END_IF
+		SP_RunStp32:
+			IF sRunData.sStatusLoader = RS_WaitRequest THEN
+				eManagerStep := SP_RunStp40;
+			END_IF
+		SP_RunStp40:
+			(* Drop part from head 2 to unloader *)
+			sRunData.TDataLoader.eModule := LMP_Lift2;
+			sRunData.TDataLoader.eTaker := LH_Head2;
+			sRunData.eCmdLoader := RCLo_PrepareDropPart;
+			eManagerStep := SP_RunStp41;
+		SP_RunStp41:
+			IF sRunData.sStatusLoader = RS_WaitRequest THEN
+				sRunData.eCmdLoader := RCLo_GivePart;
+				eManagerStep := SP_RunStp42;
+			END_IF
+		SP_RunStp42:
+			IF sRunData.sStatusLoader = RS_WaitRequest THEN
+				eManagerStep := SP_RunStp1;
+			END_IF
+	END_CASE
+
+// HFO -->
+ELSIF bTestLift1ToTableRotationToLift2 THEN
+	CASE eManagerStep OF
+		SP_InitStp1:	(*Recovery, Drop plate if we have one*)
+			bTableIsClean := FALSE;
+			IF sRunData.TDataLoader.bPlatePresent THEN
+				sRunData.eCmdLoader := RCLo_SwitchPlate;
+				eManagerStep := SP_InitStp2;
+			ELSE
+				eManagerStep := SP_InitStp3;
+			END_IF
+		SP_InitStp2: (* Switch plate done *)
+			IF sRunData.sStatusLoader = RS_WaitRequest THEN
+				eManagerStep := SP_InitStp3;
+			END_IF
+		SP_InitStp3: (* Do we need a table turn ? *)
+			IF  sRunData.TDataTable.eTableSide <>  eWorkingTableSide THEN
+				sRunData.eCmdTable := RCT_Turn;
+				eManagerStep := SP_InitStp4;
+			ELSE
+				eManagerStep := SP_InitStp5;
+			END_IF
+		SP_InitStp4:
+				IF sRunData.sStatusTable = RS_WaitRequest THEN
+					eManagerStep := SP_InitStp5;
+				END_IF
+		SP_InitStp5:
+			IF sRunData.TDataLoader.aTPartData[LH_Head1].bPartPresent THEN
+				eManagerStep := eRestartLoaderStep;
+			ELSE
+				eManagerStep := eRestartStep;
+			END_IF
+(* Running Step *)
+		SP_RunStp1:
+			sRunData.TDataLoader.iLayringOffsetPos := 0;
+			sRunData.TDataTable.iGiveTakeLayeringOffsetPosition := sRunData.TDataLoader.iLayringOffsetPos;
+			eRestartStep := SP_RunStp1;
+			eRestartLoaderStep := SP_RunStp1;
+			// Check if parts can be taken on table
+			IF sRunData.TDataTable.aTPartData[0,0,sRunData.TDataTable.eTableSide].bPartPresent
+					AND NOT sRunData.TDataLoader.aTPartData[0].bPartPresent THEN
+				// Take the part on table with head1
+				bTableIsClean := FALSE;
+				sRunData.TDataLoader.eModule := LMP_Table;
+				sRunData.TDataLoader.eTaker := LH_Head1;
+				sRunData.TDataLoader.iLayringPos := 0;
+				eManagerStep := SP_RunStp100;
+			ELSIF sRunData.TDataTable.aTPartData[1,0,sRunData.TDataTable.eTableSide].bPartPresent
+					AND NOT sRunData.TDataLoader.aTPartData[1].bPartPresent THEN
+				// Take the part on table with head2
+				bTableIsClean := FALSE;
+				sRunData.TDataLoader.eModule := LMP_Table;
+				sRunData.TDataLoader.eTaker := LH_Head2;
+				sRunData.TDataLoader.iLayringPos := 1;
+				eManagerStep := SP_RunStp100;
+			ELSIF NOT sRunData.TDataLoader.aTPartData[0].bPartPresent 
+					AND NOT sRunData.TDataLoader.aTPartData[1].bPartPresent THEN
+				// Move loader to safe for cleaning and reload
+				sRunData.eCmdLoader := RCLo_MoveToSafe;
+				eManagerStep := SP_RunStp50;
+			ELSE
+				// Move loader to safe and drop part
+				sRunData.eCmdLoader := RCLo_MoveToSafe;
+				eManagerStep := SP_RunStp2;
+			END_IF
+		SP_RunStp2: // Drop parts and check table
+			IF sRunData.sStatusLoader = RS_WaitRequest THEN
+				// Check if table can be cleaned
+				IF sRunData.sStatusTable = RS_WaitRequest
+						AND NOT sRunData.TDataTable.aTPartData[0,0,sRunData.TDataTable.eTableSide].bPartPresent
+						AND NOT sRunData.TDataTable.aTPartData[1,0,sRunData.TDataTable.eTableSide].bPartPresent 
+						AND NOT bTableIsClean THEN
+					// Clean the table
+					sRunData.eCmdTable := RCT_Clean;
+				END_IF
+				// Check if part must be dropped
+				IF sRunData.TDataLoader.aTPartData[0].bPartPresent THEN
+					// Drop part on head 1
+					sRunData.TDataLoader.eTaker := LH_Head1;
+					eManagerStep := SP_RunStp200;
+				ELSIF sRunData.TDataLoader.aTPartData[1].bPartPresent THEN
+					// Drop part on head 2
+					sRunData.TDataLoader.eTaker := LH_Head2;
+					eManagerStep := SP_RunStp200;
+				ELSIF sRunData.sStatusTable = RS_WaitRequest THEN
+					// No more parts on head and table is clean
+					bTableIsClean := TRUE;
+					eManagerStep := SP_RunStp1;
+				END_IF
+			END_IF
+
+		SP_RunStp50: // Do cleaning and reload from lift
+			eRestartStep := SP_RunStp50;
+			eRestartLoaderStep := SP_RunStp50;
+			IF sRunData.sStatusLoader = RS_WaitRequest THEN
+				// Check if table can be cleaned
+				IF sRunData.sStatusTable = RS_WaitRequest AND NOT bTableIsClean THEN
+					// Clean the table
+					sRunData.eCmdTable := RCT_Clean;
+				END_IF
+				IF bNeedNewPart THEN
+					IF NOT sRunData.TDataLoader.aTPartData[0].bPartPresent AND NOT bTablePos2NeedPart THEN
+						sRunData.TDataLoader.eModule := LMP_Lift1;
+						sRunData.TDataLoader.eTaker := LH_Head1;
+						sRunData.eCmdLoader := RCLo_PrepareTakePart;
+						eManagerStep := SP_RunStp55;
+					ELSIF NOT sRunData.TDataLoader.aTPartData[1].bPartPresent THEN
+						sRunData.TDataLoader.eModule := LMP_Lift1;
+						sRunData.TDataLoader.eTaker := LH_Head2;
+						sRunData.eCmdLoader := RCLo_PrepareTakePart;
+						eManagerStep := SP_RunStp55;
+					ELSIF sRunData.sStatusTable = RS_WaitRequest THEN
+						bTableIsClean := TRUE;
+						eManagerStep := SP_RunStp70;
+					END_IF	
+				ELSE
+					eManagerStep := SP_RunStp80;
+					// eManagerStep := SP_RunStp160; 	// purging
+				END_IF
+			END_IF				
+		SP_RunStp55:
+			IF sRunData.sStatusLoader = RS_WaitRequest THEN
+				sRunData.eCmdLoader := RCLo_TakePart;
+				eManagerStep := SP_RunStp60;
+			END_IF
+		SP_RunStp60:
+			IF sRunData.sStatusLoader = RS_WaitRequest 
+					AND sRunData.sStatusTable = RS_WaitRequest THEN
+				bTableIsClean := TRUE;
+				eManagerStep := SP_RunStp50;
+			END_IF
+		SP_RunStp70: (* Drop part on layering *)
+			IF sRunData.sStatusTable = RS_WaitRequest THEN
+				eRestartStep := SP_RunStp70;
+				eRestartLoaderStep := SP_RunStp70;
+				IF sRunData.TDataLoader.aTPartData[0].bPartPresent THEN
+					IF sRunData.TDataLoader.aTPartData[0].bToReject THEN
+						sRunData.TDataLoader.eModule := LMP_Reject;
+						sRunData.TDataLoader.eTaker := LH_Head1;
+						sRunData.eCmdLoader := RCLo_PrepareDropPart;
+						eManagerStep := SP_RunStp150;
+					ELSE
+						sRunData.TDataLoader.eModule := LMP_Table;
+						sRunData.TDataLoader.eTaker := LH_Head1;
+						sRunData.TDataLoader.iLayringPos := 0;
+						sRunData.eCmdLoader := RCLo_PrepareDropPart;
+						eManagerStep := SP_RunStp75;
+					END_IF
+				ELSIF sRunData.TDataLoader.aTPartData[1].bPartPresent THEN
+					IF sRunData.TDataLoader.aTPartData[1].bToReject THEN
+						sRunData.TDataLoader.eModule := LMP_Reject;
+						sRunData.TDataLoader.eTaker := LH_Head2;
+						sRunData.eCmdLoader := RCLo_PrepareDropPart;
+						bTablePos2NeedPart := TRUE;
+						eManagerStep := SP_RunStp150;
+					ELSE
+						sRunData.TDataLoader.eModule := LMP_Table;
+						sRunData.TDataLoader.eTaker := LH_Head2;
+						sRunData.TDataLoader.iLayringPos := 1;
+						sRunData.eCmdLoader := RCLo_PrepareDropPart;
+						bTablePos2NeedPart := FALSE;
+						eManagerStep := SP_RunStp75;
+					END_IF
+				ELSE
+					// Loading finished, turn table
+					eManagerStep := SP_RunStp80;
+				END_IF
+			END_IF
+		SP_RunStp75:
+			IF sRunData.sStatusLoader = RS_WaitRequest THEN
+				sRunData.TDataTable.iGiveTakeLayeringPosition := sRunData.TDataLoader.iLayringPos;
+				sRunData.eCmdLoader := RCLo_GivePart;
+				sRunData.eCmdTable := RCT_TakePart;
+				eManagerStep := SP_RunStp77;
+			END_IF
+		SP_RunStp77:
+			IF sRunData.sStatusLoader = RS_WaitRequest AND  sRunData.sStatusTable = RS_WaitRequest  THEN
+				eManagerStep := SP_RunStp70;
+			END_IF		
+		SP_RunStp80:
+			IF sRunData.sStatusLoader = RS_WaitRequest AND  sRunData.sStatusTable = RS_WaitRequest  THEN
+				sRunData.eCmdLoader := RCLo_MoveToSafe;
+				eManagerStep := SP_RunStp85;
+			END_IF		
+		SP_RunStp85:
+			IF sRunData.sStatusLoader = RS_WaitRequest THEN
+				(* Pearling finish *)
+				eManagerStep := SP_RunStp90;
+			END_IF
+		SP_RunStp90:
+			eRestartStep := SP_RunStp96;
+			eRestartLoaderStep := SP_RunStp93;
+			sRunData.eCmdTable := RCT_Turn;
+			eWorkingTableSide := ePearlingTableSide;
+			eManagerStep := SP_RunStp93;
+		SP_RunStp93: (*Turning Table *)
+			IF sRunData.sStatusTable = RS_ProcessRequest2 THEN
+				IF iPartOnProcess = 0 AND NOT bNeedNewPart THEN
+					eManagerStep := SP_RunStp300;
+				ELSE
+					bReadyForPearling := TRUE;
+					eManagerStep := SP_RunStp96;
+				END_IF
+			END_IF
+		SP_RunStp96: (*Cleaning Table *)
+			IF sRunData.sStatusTable = RS_WaitRequest  AND  sRunData.sStatusLoader = RS_WaitRequest  THEN
+				bTableIsClean := TRUE;
+				eManagerStep := SP_RunStp1;
+			END_IF
+		SP_RunStp100: (* Unloading part on layering *)
+			eRestartStep := SP_RunStp100;
+			eRestartLoaderStep := SP_RunStp100;
+			sRunData.TDataLoader.eModule := LMP_Table;
+			sRunData.eCmdLoader := RCLo_PrepareTakePart;
+			eManagerStep := SP_RunStp105;
+		SP_RunStp105:
+			IF sRunData.sStatusLoader = RS_WaitRequest THEN
+				sRunData.eCmdLoader := RCLo_TakePart;
+				sRunData.TDataTable.iGiveTakeLayeringPosition := sRunData.TDataLoader.iLayringPos;
+				sRunData.TDataTable.iGiveTakeLayeringOffsetPosition := sRunData.TDataLoader.iLayringOffsetPos;
+				sRunData.eCmdTable := RCT_GivePart;
+				eManagerStep := SP_RunStp110;
+			END_IF
+		SP_RunStp110:
+			IF sRunData.sStatusLoader = RS_WaitRequest AND  sRunData.sStatusTable = RS_WaitRequest  THEN
+				eManagerStep := SP_RunStp1;
+			END_IF
+		SP_RunStp150: // Give bad part to the reject
+			IF sRunData.sStatusLoader = RS_WaitRequest THEN
+				sRunData.eCmdLoader := RCLo_GivePart;
+				eManagerStep := SP_RunStp151;
+			END_IF
+		SP_RunStp151:
+			IF sRunData.sStatusLoader = RS_WaitRequest THEN
+				eManagerStep := SP_RunStp50;
+			END_IF
+		SP_RunStp160: // TODO : (HFO) // Steps for purging 
+			IF sRunData.sStatusLoader = RS_WaitRequest AND  sRunData.sStatusTable = RS_WaitRequest  THEN
+				sRunData.eCmdLoader := RCLo_MoveToSafe;
+				//eManagerStep := SP_RunStp85;
+			END_IF		
+		SP_RunStp200:
+			IF sRunData.sStatusLoader = RS_WaitRequest THEN
+				IF sRunData.TDataLoader.aTPartData[LH_Head1].bToReject THEN
+					sRunData.TDataLoader.eModule := LMP_Reject;
+				ELSIF sProductionCmd.TRequestSample.Activate THEN
+					sRunData.TDataLoader.eModule := LMP_Sample;
+					sProductionCmd.TRequestSample.Activate := FALSE;
+				ELSE
+					sProductionCmd.TAutoSampling.iPeriodCnt := sProductionCmd.TAutoSampling.iPeriodCnt + 1;
+					IF sProductionCmd.TAutoSampling.bEnable AND (sProductionCmd.TAutoSampling.iPeriodCnt >= (sProductionCmd.TAutoSampling.iPeriod - sProductionCmd.TAutoSampling.iBatchSize)) THEN
+						sRunData.TDataLoader.eModule := LMP_Sample;
+						sProductionCmd.TAutoSampling.iBatchCnt := sProductionCmd.TAutoSampling.iBatchCnt + 1;
+						IF sProductionCmd.TAutoSampling.iBatchCnt >= sProductionCmd.TAutoSampling.iBatchSize THEN
+							sProductionCmd.TAutoSampling.iBatchCnt := 0;
+							sProductionCmd.TAutoSampling.iPeriodCnt := 0;
+						END_IF
+					ELSE
+						sRunData.TDataLoader.eModule := LMP_Lift2;
+					END_IF
+				END_IF
+				sRunData.eCmdLoader := RCLo_PrepareDropPart;
+				eManagerStep := SP_RunStp205;
+			END_IF
+		SP_RunStp205:
+			IF sRunData.sStatusLoader = RS_WaitRequest THEN
+				sRunData.eCmdLoader := RCLo_GivePart;
+				eManagerStep := SP_RunStp210;
+			END_IF
+		SP_RunStp210:
+			IF sRunData.sStatusLoader = RS_WaitRequest THEN
+				bTableIsClean := TRUE;
+				eManagerStep := SP_RunStp2;
+			END_IF
+		SP_RunStp300: (*End of recipe *)
+			bReadyForPearling := FALSE;
+			sRunData.eCmdLoader := RCLo_EndOfRecipe;
+			eManagerStep := SP_RunStp305;
+		SP_RunStp305: (*Loader in safe and lift in unload position *)
+			IF sRunData.sStatusLoader = RS_WaitRequest  AND sRunData.sStatusPearling = RS_WaitRequest AND sRunData.sStatusTable = RS_WaitRequest THEN
+				eManagerStep := SP_RunStp0;
+			END_IF
+	END_CASE
+// HFO <--
+	
+ELSIF bTestLift1ToTableToLift2 THEN
+	CASE eManagerStep OF
+		SP_InitStp1:	(*Recovery, Drop plate if we have one*)
+			IF sRunData.TDataLoader.bPlatePresent THEN
+				sRunData.eCmdLoader := RCLo_SwitchPlate;
+				eManagerStep := SP_InitStp2;
+			ELSE
+				eManagerStep := SP_InitStp3;
+			END_IF
+		SP_InitStp2: (* Switch plate done *)
+			IF sRunData.sStatusLoader = RS_WaitRequest THEN
+				eManagerStep := SP_InitStp3;
+			END_IF
+		SP_InitStp3: (* Do we need a table turn ? *)
+			IF  sRunData.TDataTable.eTableSide <>  eWorkingTableSide THEN
+				sRunData.eCmdTable := RCT_Turn;
+				eManagerStep := SP_InitStp4;
+			ELSE
+				eManagerStep := SP_InitStp5;
+			END_IF
+		SP_InitStp4:
+				IF sRunData.sStatusTable = RS_WaitRequest THEN
+					eManagerStep := SP_InitStp5;
+				END_IF
+		SP_InitStp5:
+			IF sRunData.TDataLoader.aTPartData[LH_Head1].bPartPresent OR sRunData.TDataLoader.aTPartData[LH_Head2].bPartPresent THEN
+				eManagerStep := eRestartLoaderStep;
+			ELSE
+				eManagerStep := eRestartStep;
+			END_IF
+(* Running Step *)
+		SP_RunStp1:
+			eRestartStep := SP_RunStp1;
+			eRestartLoaderStep := SP_RunStp1;
+			eManagerStep := SP_RunStp2;
+		SP_RunStp2:
+			(* Check if part present on table A/C*)
+			IF sRunData.TDataTable.aTPartData[0,0,sRunData.TDataTable.eTableSide].bPartPresent THEN
+				sRunData.TDataLoader.iLayringPos := 0;
+				eManagerStep := SP_RunStp40;
+			(* Check if part present on table B/D*)
+			ELSIF sRunData.TDataTable.aTPartData[1,0,sRunData.TDataTable.eTableSide].bPartPresent THEN
+				sRunData.TDataLoader.iLayringPos := 1;
+				eManagerStep := SP_RunStp40;
+			ELSE
+				IF NOT sRunData.TDataLoader.aTPartData[LH_Head1].bPartPresent THEN
+					eManagerStep := SP_RunStp30;
+				ELSE
+					eManagerStep := SP_RunStp60;
+				END_IF
+			END_IF
+		SP_RunStp10:
+			(* Take part on head 1 from loader *)
+			IF sRunData.TDataLoader.aTPartData[LH_Head1].bPartPresent THEN
+				eManagerStep := SP_RunStp20;
+			ELSE
+				sRunData.TDataLoader.eModule := LMP_Lift1;
+				sRunData.TDataLoader.eTaker := LH_Head1;
+				sRunData.eCmdLoader := RCLo_PrepareTakePart;
+				eManagerStep := SP_RunStp11;
+			END_IF
+		SP_RunStp11:
+			IF sRunData.sStatusLoader = RS_WaitRequest THEN
+				sRunData.eCmdLoader := RCLo_TakePart;
+				eManagerStep := SP_RunStp12;
+			END_IF
+		SP_RunStp12:
+			IF sRunData.sStatusLoader = RS_WaitRequest THEN
+				eManagerStep := SP_RunStp20;
+			END_IF
+		SP_RunStp20:
+			(* Drop part on head 1 on table *)
+			sRunData.TDataLoader.eModule := LMP_Table;
+			sRunData.TDataLoader.eTaker := LH_Head1;
+			sRunData.TDataLoader.iLayringPos := 1;
+			sRunData.TDataLoader.iLayringOffsetPos := 0;
+			sRunData.eCmdLoader := RCLo_PrepareDropPart;
+			eManagerStep := SP_RunStp21;
+		SP_RunStp21:
+			IF sRunData.sStatusLoader = RS_WaitRequest THEN
+				sRunData.eCmdLoader := RCLo_GivePart;
+				sRunData.TDataTable.iGiveTakeLayeringPosition := sRunData.TDataLoader.iLayringPos;
+				sRunData.TDataTable.iGiveTakeLayeringOffsetPosition := sRunData.TDataLoader.iLayringOffsetPos;
+				sRunData.eCmdTable := RCT_TakePart;
+				eManagerStep := SP_RunStp22;
+			END_IF
+		SP_RunStp22:
+			IF sRunData.sStatusLoader = RS_WaitRequest AND sRunData.sStatusTable = RS_WaitRequest THEN
+				IF NOT sRunData.TDataLoader.aTPartData[LH_Head1].bPartPresent THEN
+					eManagerStep := SP_RunStp30;
+				END_IF
+			END_IF
+		SP_RunStp30:
+			(* Take part on head 1 from loader *)
+			sRunData.TDataLoader.eModule := LMP_Lift1;
+			sRunData.TDataLoader.eTaker := LH_Head1;
+			eManagerStep := SP_RunStp31;
+			IF NOT sRunData.TDataTable.aTPartData[0,0,sRunData.TDataTable.eTableSide].bPartPresent THEN
+				sRunData.eCmdLoader := RCLo_PrepareTakePart;
+				sRunData.TDataLoader.iLayringPos := 0;
+			ELSIF NOT sRunData.TDataTable.aTPartData[1,0,sRunData.TDataTable.eTableSide].bPartPresent THEN
+				sRunData.eCmdLoader := RCLo_PrepareTakePart;
+				sRunData.TDataLoader.iLayringPos := 1;
+			ELSE
+				eManagerStep := SP_RunStp2;
+			END_IF
+		SP_RunStp31:
+				IF sRunData.sStatusLoader = RS_WaitRequest THEN
+				sRunData.eCmdLoader := RCLo_TakePart;
+				eManagerStep := SP_RunStp32;
+			END_IF
+		SP_RunStp32:
+			IF sRunData.sStatusLoader = RS_WaitRequest THEN
+				eManagerStep := SP_RunStp50;
+			END_IF
+		SP_RunStp40:
+			(* Take part on head 1 from table *)
+			sRunData.TDataLoader.eModule := LMP_Table;
+			sRunData.TDataLoader.eTaker := LH_Head1;
+			sRunData.TDataLoader.iLayringOffsetPos := 0;
+			sRunData.eCmdLoader := RCLo_PrepareTakePart;
+			eManagerStep := SP_RunStp41;
+		SP_RunStp41:
+			IF sRunData.sStatusLoader = RS_WaitRequest THEN
+				sRunData.eCmdLoader := RCLo_TakePart;
+				sRunData.TDataTable.iGiveTakeLayeringPosition := sRunData.TDataLoader.iLayringPos;
+				sRunData.TDataTable.iGiveTakeLayeringOffsetPosition := sRunData.TDataLoader.iLayringOffsetPos;
+				sRunData.eCmdTable := RCT_GivePart;
+				eManagerStep := SP_RunStp42;
+			END_IF
+		SP_RunStp42:
+			IF sRunData.sStatusLoader = RS_WaitRequest AND  sRunData.sStatusTable = RS_WaitRequest  THEN
+				eManagerStep := SP_RunStp60;
+			END_IF
+		SP_RunStp50:
+			(* Drop part on head 1 on table *)
+			sRunData.TDataLoader.eModule := LMP_Table;
+			sRunData.TDataLoader.eTaker := LH_Head1;
+			sRunData.TDataLoader.iLayringOffsetPos := 0;
+			sRunData.eCmdLoader := RCLo_PrepareDropPart;
+			eManagerStep := SP_RunStp51;
+		SP_RunStp51:
+			IF sRunData.sStatusLoader = RS_WaitRequest THEN
+				sRunData.eCmdLoader := RCLo_GivePart;
+				sRunData.TDataTable.iGiveTakeLayeringPosition := sRunData.TDataLoader.iLayringPos;
+				sRunData.TDataTable.iGiveTakeLayeringOffsetPosition := sRunData.TDataLoader.iLayringOffsetPos;
+				sRunData.eCmdTable := RCT_TakePart;
+				eManagerStep := SP_RunStp52;
+			END_IF
+		SP_RunStp52:
+			IF sRunData.sStatusLoader = RS_WaitRequest AND sRunData.sStatusTable = RS_WaitRequest THEN
+				IF NOT sRunData.TDataLoader.aTPartData[LH_Head1].bPartPresent THEN
+					eManagerStep := SP_RunStp30;
+				END_IF
+			END_IF
+		SP_RunStp60:
+			(* Drop part from head 1 to unloader *)
+			sRunData.TDataLoader.eModule := LMP_Lift2;
+			sRunData.TDataLoader.eTaker := LH_Head1;
+			sRunData.eCmdLoader := RCLo_PrepareDropPart;
+			eManagerStep := SP_RunStp61;
+		SP_RunStp61:
+			IF sRunData.sStatusLoader = RS_WaitRequest THEN
+				sRunData.eCmdLoader := RCLo_GivePart;
+				eManagerStep := SP_RunStp62;
+			END_IF
+		SP_RunStp62:
+			IF sRunData.sStatusLoader = RS_WaitRequest THEN
+				eManagerStep := SP_RunStp2;
+			END_IF
+	END_CASE
+ELSIF NOT sConfigFileData.bParallelProduction AND NOT bLayeringWithTwoParts THEN
+	IF sRunData.sStatusPearling <> RS_WaitRequest THEN
+		bPearlingFinishOnTableSide := FALSE;
+	ELSE
+		bPearlingFinishOnTableSide := TRUE;
+		IF	(
+				sRunData.TDataTable.aTPartData[0,0,ePearlingTableSide].bPartPresent AND
+				NOT sRunData.TDataTable.aTPartData[0,0,ePearlingTableSide].abPearlingDone[PH_Left,PS_SUS] AND
+				sConfigFileData.asPearlingData[PS_SUS].THead[PH_Left].nNbOfPearls > 0
+			) OR (
+				 sRunData.TDataTable.aTPartData[0,0,ePearlingTableSide].bPartPresent AND
+				NOT sRunData.TDataTable.aTPartData[0,0,ePearlingTableSide].abPearlingDone[PH_Right,PS_SUS] AND
+				sConfigFileData.asPearlingData[PS_SUS].THead[PH_Right].nNbOfPearls > 0
+			) OR (
+				sRunData.TDataTable.aTPartData[1,0,ePearlingTableSide].bPartPresent AND
+				NOT sRunData.TDataTable.aTPartData[1,0,ePearlingTableSide].abPearlingDone[PH_Left,PS_SOUS] AND
+				sConfigFileData.asPearlingData[PS_SOUS].THead[PH_Left].nNbOfPearls > 0
+			) OR (
+				sRunData.TDataTable.aTPartData[1,0,ePearlingTableSide].bPartPresent AND
+				NOT sRunData.TDataTable.aTPartData[1,0,ePearlingTableSide].abPearlingDone[PH_Right,PS_SOUS] AND
+				sConfigFileData.asPearlingData[PS_SOUS].THead[PH_Right].nNbOfPearls > 0
+			) THEN
+			bPearlingFinishOnTableSide := FALSE;
+		END_IF
+	END_IF
+	CASE eManagerStep OF
+		SP_InitStp1:	(*Recovery, Drop plate if we have one*)
+			sRunData.eCmdPearling := RCP_CheckSharpen;
+			bReadyForPearling := FALSE;
+			bTableIsClean := FALSE;
+			IF sRunData.TDataLoader.bPlatePresent THEN
+				sRunData.eCmdLoader := RCLo_SwitchPlate;
+				eManagerStep := SP_InitStp2;
+			ELSE
+				eManagerStep := SP_InitStp3;
+			END_IF
+		SP_InitStp2: (* Switch plate done *)
+			IF sRunData.sStatusLoader = RS_WaitRequest THEN
+				eManagerStep := SP_InitStp3;
+			END_IF
+		SP_InitStp3: (* Do we need a table turn ? *)
+			IF  sRunData.TDataTable.eTableSide <>  eWorkingTableSide THEN
+				sRunData.eCmdTable := RCT_Turn;
+				eManagerStep := SP_InitStp4;
+			ELSE
+				eManagerStep := SP_InitStp5;
+			END_IF
+		SP_InitStp4:
+				IF sRunData.sStatusTable = RS_WaitRequest THEN
+					eManagerStep := SP_InitStp5;
+				END_IF
+		SP_InitStp5:
+			bReadyForPearling := TRUE;
+			IF sRunData.TDataLoader.aTPartData[LH_Head1].bPartPresent OR sRunData.TDataLoader.aTPartData[LH_Head2].bPartPresent THEN
+				eManagerStep := eRestartLoaderStep;
+			ELSE
+				eManagerStep := eRestartStep;
+			END_IF
+	END_CASE
+	IF bPearlsOnSideSus THEN
+		CASE eManagerStep OF
+(* Running Step *)
+			SP_RunStp1:
+				eRestartStep := SP_RunStp1;
+				eRestartLoaderStep := SP_RunStp4;
+				IF sRunData.TDataTable.aTPartData[1,0,sRunData.TDataTable.eTableSide].bPartPresent THEN
+					bTableIsClean := FALSE;
+					eManagerStep := SP_RunStp2;
+				ELSE
+					eManagerStep := SP_RunStp10; (* Skip *)
+				END_IF
+			SP_RunStp2: (* Unloading part on layering 1 *)
+				sRunData.TDataLoader.eModule := LMP_Table;
+				sRunData.TDataLoader.eTaker := LH_Head2;
+				sRunData.TDataLoader.iLayringPos := 1;
+				sRunData.TDataLoader.iLayringOffsetPos := 0;
+				sRunData.eCmdLoader := RCLo_PrepareTakePart;
+				eManagerStep := SP_RunStp3;
+			SP_RunStp3:
+				IF sRunData.sStatusLoader = RS_WaitRequest THEN
+					sRunData.eCmdLoader := RCLo_TakePart;
+					sRunData.TDataTable.iGiveTakeLayeringPosition := sRunData.TDataLoader.iLayringPos;
+					sRunData.TDataTable.iGiveTakeLayeringOffsetPosition := sRunData.TDataLoader.iLayringOffsetPos;
+					sRunData.eCmdTable := RCT_GivePart;
+					eManagerStep := SP_RunStp4;
+				END_IF
+			SP_RunStp4:
+				IF sRunData.sStatusLoader = RS_WaitRequest AND  sRunData.sStatusTable = RS_WaitRequest  THEN
+					sRunData.eCmdLoader := RCLo_Cleaning;
+					eManagerStep := SP_RunStp5;
+				END_IF
+			SP_RunStp5:
+				IF sRunData.sStatusLoader = RS_WaitRequest  THEN
+					IF sRunData.TDataLoader.aTPartData[LH_Head2].bToReject THEN
+						sRunData.TDataLoader.eModule := LMP_Reject;
+					ELSIF sProductionCmd.TRequestSample.Activate THEN
+						sRunData.TDataLoader.eModule := LMP_Sample;
+						sProductionCmd.TRequestSample.Activate := FALSE;
+					ELSE
+						sProductionCmd.TAutoSampling.iPeriodCnt := sProductionCmd.TAutoSampling.iPeriodCnt  + 1;
+						IF sProductionCmd.TAutoSampling.bEnable AND (sProductionCmd.TAutoSampling.iPeriodCnt  >= (sProductionCmd.TAutoSampling.iPeriod-sProductionCmd.TAutoSampling.iBatchSize)) THEN
+							sRunData.TDataLoader.eModule := LMP_Sample;
+							sProductionCmd.TAutoSampling.iBatchCnt := sProductionCmd.TAutoSampling.iBatchCnt + 1;
+							IF sProductionCmd.TAutoSampling.iBatchCnt >= sProductionCmd.TAutoSampling.iBatchSize THEN
+								sProductionCmd.TAutoSampling.iBatchCnt := 0;
+								sProductionCmd.TAutoSampling.iPeriodCnt := 0;
+							END_IF
+						ELSE
+							sRunData.TDataLoader.eModule := LMP_Lift2;
+						END_IF
+					END_IF
+					sRunData.eCmdLoader := RCLo_PrepareDropPart;
+					eManagerStep := SP_RunStp6;
+				END_IF
+			SP_RunStp6:
+				IF sRunData.sStatusLoader = RS_WaitRequest THEN
+					sRunData.eCmdLoader := RCLo_GivePart;
+					eManagerStep := SP_RunStp7;
+				END_IF
+			SP_RunStp7:
+				IF sRunData.sStatusLoader = RS_WaitRequest THEN
+					eManagerStep := SP_RunStp10;
+				END_IF
+			SP_RunStp10: (* Unloading part on layering 0 *)
+				eRestartStep := SP_RunStp10;
+				eRestartLoaderStep := SP_RunStp13;
+				IF sRunData.TDataTable.aTPartData[0,0,sRunData.TDataTable.eTableSide].bPartPresent THEN
+					bTableIsClean := FALSE;
+					eManagerStep := SP_RunStp11;
+				ELSE
+					eManagerStep := SP_RunStp20;(* Skip *)
+				END_IF
+			SP_RunStp11:
+				sRunData.TDataLoader.eModule := LMP_Table;
+				sRunData.TDataLoader.eTaker := LH_Head1;
+				sRunData.TDataLoader.iLayringPos := 0;
+				sRunData.TDataLoader.iLayringOffsetPos := 0;
+				sRunData.eCmdLoader := RCLo_PrepareTakePart;
+				eManagerStep := SP_RunStp12;
+			SP_RunStp12:
+				IF sRunData.sStatusLoader = RS_WaitRequest THEN
+					sRunData.eCmdLoader := RCLo_TakePart;
+					sRunData.TDataTable.iGiveTakeLayeringPosition := sRunData.TDataLoader.iLayringPos;
+					sRunData.TDataTable.iGiveTakeLayeringOffsetPosition := sRunData.TDataLoader.iLayringOffsetPos;
+					sRunData.eCmdTable := RCT_GivePart;
+					eManagerStep := SP_RunStp13;
+				END_IF
+			SP_RunStp13:
+				IF sRunData.sStatusLoader = RS_WaitRequest AND  sRunData.sStatusTable = RS_WaitRequest  THEN
+					IF bUseTurnOver THEN
+						sRunData.eCmdLoader := RCLo_Cleaning;
+						eManagerStep := SP_RunStp14;
+					ELSE
+						IF sRunData.TDataLoader.aTPartData[LH_Head2].bToReject THEN
+							sRunData.TDataLoader.eModule := LMP_Reject;
+						ELSIF sProductionCmd.TRequestSample.Activate THEN
+							sRunData.TDataLoader.eModule := LMP_Sample;
+							sProductionCmd.TRequestSample.Activate := FALSE;
+						ELSE
+							sProductionCmd.TAutoSampling.iPeriodCnt := sProductionCmd.TAutoSampling.iPeriodCnt + 1;
+							IF sProductionCmd.TAutoSampling.bEnable AND (sProductionCmd.TAutoSampling.iPeriodCnt >= (sProductionCmd.TAutoSampling.iPeriod - sProductionCmd.TAutoSampling.iBatchSize)) THEN
+								sRunData.TDataLoader.eModule := LMP_Sample;
+								sProductionCmd.TAutoSampling.iBatchCnt := sProductionCmd.TAutoSampling.iBatchCnt + 1;
+								IF sProductionCmd.TAutoSampling.iBatchCnt >= sProductionCmd.TAutoSampling.iBatchSize THEN
+									sProductionCmd.TAutoSampling.iBatchCnt := 0;
+									sProductionCmd.TAutoSampling.iPeriodCnt := 0;
+								END_IF
+							ELSE
+								sRunData.TDataLoader.eModule := LMP_Lift2;
+							END_IF
+						END_IF
+						sRunData.eCmdLoader := RCLo_PrepareDropPart;
+						eManagerStep := SP_RunStp15;
+					END_IF
+				END_IF
+			SP_RunStp14:
+				IF sRunData.sStatusLoader = RS_WaitRequest THEN
+					sRunData.eCmdLoader := RCLo_PrepareDropPart;
+					sRunData.TDataLoader.eModule := LMP_TurnOverArm;
+					eManagerStep := SP_RunStp15;
+				END_IF
+			SP_RunStp15:
+				IF sRunData.sStatusLoader = RS_WaitRequest THEN
+					IF sRunData.TDataLoader.eModule = LMP_TurnOverArm THEN
+						sRunData.eCmdTurnOver := RCTO_TakePart;
+					END_IF
+					sRunData.eCmdLoader := RCLo_GivePart;
+					eManagerStep := SP_RunStp16;
+				END_IF
+			SP_RunStp16:
+				IF sRunData.sStatusLoader = RS_WaitRequest AND sRunData.sStatusTurnOver = RS_WaitRequest THEN
+					eManagerStep := SP_RunStp20;
+				END_IF
+			SP_RunStp20: (* Unloading finish, proceed cleaning and turn over*)
+				eRestartStep := SP_RunStp20;
+				eRestartLoaderStep := SP_RunStp20;
+				IF iPartOnProcess = 0 AND NOT bNeedNewPart THEN
+					eManagerStep := SP_RunStp100;
+				ELSE
+					sRunData.eCmdLoader := RCLo_MoveToSafe;
+					eManagerStep := SP_RunStp21;
+				END_IF
+			SP_RunStp21:
+				IF sRunData.sStatusLoader = RS_WaitRequest THEN
+					IF sRunData.TDataTurnOver.aTPartData[TO_Arm].bPartPresent THEN
+						sRunData.eCmdTurnOver := RCTO_Turn;
+					END_IF
+					IF NOT bTableIsClean THEN
+						sRunData.eCmdTable := RCT_Clean;
+					END_IF
+					eManagerStep := SP_RunStp22;
+				END_IF
+			SP_RunStp22: (*Cleaning Table and proceed turn over*)
+				IF sRunData.sStatusTable = RS_WaitRequest  AND sRunData.sStatusTurnOver = RS_WaitRequest THEN
+					bTableIsClean := TRUE;
+					eManagerStep := SP_RunStp23;
+				END_IF
+			SP_RunStp23:
+				eRestartStep := SP_RunStp23;
+				eRestartLoaderStep := SP_RunStp26;
+				IF sRunData.TDataTurnOver.aTPartData[TO_Fix].bPartPresent THEN
+					bTableIsClean := FALSE;
+					eManagerStep := SP_RunStp24;
+				ELSE
+					eManagerStep := SP_RunStp40; (* Skip *)
+				END_IF
+			SP_RunStp24: (* Move part from turn over *)
+				sRunData.TDataLoader.eModule := LMP_TurnOverFix;
+				sRunData.TDataLoader.eTaker := LH_Head2;
+				sRunData.eCmdLoader := RCLo_PrepareTakePart;
+				eManagerStep := SP_RunStp25;
+			SP_RunStp25:
+				IF sRunData.sStatusLoader = RS_WaitRequest THEN
+					sRunData.eCmdLoader := RCLo_TakePart;
+					sRunData.eCmdTurnOver := RCTO_GivePart;
+					eManagerStep := SP_RunStp26;
+				END_IF
+			SP_RunStp26:
+				IF sRunData.sStatusLoader = RS_WaitRequest AND sRunData.sStatusTurnOver = RS_WaitRequest THEN
+					sRunData.eCmdLoader := RCLo_Cleaning;
+					eManagerStep := SP_RunStp27;
+				END_IF
+			SP_RunStp27:
+				IF sRunData.sStatusLoader = RS_WaitRequest THEN
+					sRunData.TDataLoader.eModule := LMP_Table;
+					sRunData.TDataLoader.iLayringPos := 1;
+					sRunData.TDataLoader.iLayringOffsetPos := 0;
+					sRunData.eCmdLoader := RCLo_PrepareDropPart;
+					eManagerStep := SP_RunStp28;
+				END_IF
+			SP_RunStp28:
+				IF sRunData.sStatusLoader = RS_WaitRequest THEN
+					sRunData.eCmdLoader := RCLo_GivePart;
+					sRunData.TDataTable.iGiveTakeLayeringPosition := sRunData.TDataLoader.iLayringPos;
+					sRunData.TDataTable.iGiveTakeLayeringOffsetPosition := sRunData.TDataLoader.iLayringOffsetPos;
+					sRunData.eCmdTable := RCT_TakePart;
+					eManagerStep := SP_RunStp29;
+				END_IF
+			SP_RunStp29:
+				IF sRunData.sStatusLoader = RS_WaitRequest AND sRunData.sStatusTable = RS_WaitRequest THEN
+					(* Reject part if not correctly dropped *)
+					IF sRunData.TDataLoader.aTPartData[LH_Head2].bPartPresent THEN
+						eManagerStep := SP_RunStp30;
+					ELSE
+						eManagerStep := SP_RunStp40;
+					END_IF
+				END_IF
+			SP_RunStp30:
+				sRunData.TDataLoader.eModule := LMP_Reject;
+				sRunData.eCmdLoader := RCLo_PrepareDropPart;
+				eManagerStep := SP_RunStp15;
+			SP_RunStp40: (* Load layering 1 *)
+				eRestartStep := SP_RunStp40;
+				eRestartLoaderStep := SP_RunStp42;
+				IF bNeedNewPart AND NOT sRunData.TDataTable.aTPartData[0,0,sRunData.TDataTable.eTableSide].bPartPresent THEN
+					bTableIsClean := FALSE;
+					sRunData.TDataLoader.eModule := LMP_Lift1;
+					sRunData.TDataLoader.eTaker := LH_Head1;
+					sRunData.eCmdLoader := RCLo_PrepareTakePart;
+					eManagerStep := SP_RunStp41;
+				ELSE
+					eManagerStep := SP_RunStp50; (* Skip *)
+				END_IF
+			SP_RunStp41:
+				IF sRunData.sStatusLoader = RS_WaitRequest THEN
+					sRunData.eCmdLoader := RCLo_TakePart;
+					eManagerStep := SP_RunStp42;
+				END_IF
+			SP_RunStp42:
+				IF sRunData.sStatusLoader = RS_WaitRequest THEN
+					(* Check if a part was taken or not *)
+					IF sRunData.TDataLoader.aTPartData[LH_Head1].bPartPresent THEN
+						sRunData.TDataLoader.eModule := LMP_Table;
+						sRunData.TDataLoader.iLayringPos := 0;
+						sRunData.TDataLoader.iLayringOffsetPos := 0;
+						sRunData.eCmdLoader := RCLo_PrepareDropPart;
+						eManagerStep := SP_RunStp43;
+					ELSE
+						eManagerStep := SP_RunStp40;
+					END_IF
+				END_IF
+			SP_RunStp43:
+				IF sRunData.sStatusLoader = RS_WaitRequest THEN
+					sRunData.eCmdLoader := RCLo_GivePart;
+					sRunData.TDataTable.iGiveTakeLayeringPosition := sRunData.TDataLoader.iLayringPos;
+					sRunData.TDataTable.iGiveTakeLayeringOffsetPosition := sRunData.TDataLoader.iLayringOffsetPos;
+					sRunData.eCmdTable := RCT_TakePart;
+					eManagerStep := SP_RunStp44;
+				END_IF
+			SP_RunStp44:
+				IF sRunData.sStatusLoader = RS_WaitRequest AND  sRunData.sStatusTable = RS_WaitRequest  THEN
+					(* Reject part if not correctly dropped *)
+					IF sRunData.TDataLoader.aTPartData[LH_Head2].bPartPresent THEN
+						eManagerStep := SP_RunStp30;
+					ELSE
+						eManagerStep := SP_RunStp50;
+					END_IF
+				END_IF
+			SP_RunStp50: (* Launch loader to safe *)
+				eRestartStep := SP_RunStp50;
+				eRestartLoaderStep := SP_RunStp50;
+				sRunData.eCmdLoader := RCLo_MoveToSafe;
+				eManagerStep := SP_RunStp51;
+			SP_RunStp51:
+				IF sRunData.sStatusLoader = RS_WaitRequest AND bPearlingFinishOnTableSide THEN
+					(* Pearling finish *)
+					bReadyForPearling := FALSE;
+					eManagerStep := SP_RunStp52;
+				END_IF
+			SP_RunStp52:
+				eRestartStep := SP_RunStp53;
+				eRestartLoaderStep := SP_RunStp53;
+				sRunData.eCmdTable := RCT_TurnAndClean;
+				eWorkingTableSide := ePearlingTableSide;
+				eManagerStep := SP_RunStp53;
+			SP_RunStp53: (*Turning Table *)
+				IF sRunData.sStatusTable = RS_ProcessRequest2 THEN
+					bReadyForPearling := TRUE;
+					eManagerStep := SP_RunStp54;
+				END_IF
+			SP_RunStp54: (*Cleaning Table *)
+				IF sRunData.sStatusTable = RS_WaitRequest AND sRunData.sStatusLoader = RS_WaitRequest  THEN
+					bTableIsClean := TRUE;
+					eManagerStep := SP_RunStp1;
+				END_IF
+			SP_RunStp100: (*End of recipe *)
+				bReadyForPearling := FALSE;
+				sRunData.eCmdLoader := RCLo_EndOfRecipe;
+				eManagerStep := SP_RunStp101;
+			SP_RunStp101: (*Loader in safe and lift in unload position *)
+				IF sRunData.sStatusLoader = RS_WaitRequest  AND sRunData.sStatusPearling = RS_WaitRequest THEN
+					eManagerStep := SP_RunStp0;
+				END_IF
+		END_CASE
+	ELSE
+		CASE eManagerStep OF
+(* Running Step, Parts is TurnOver at begining *)
+			SP_RunStp1:
+				eRestartStep := SP_RunStp1;
+				eRestartLoaderStep := SP_RunStp4;
+				IF sRunData.TDataTable.aTPartData[1,0,sRunData.TDataTable.eTableSide].bPartPresent THEN
+					bTableIsClean := FALSE;
+					eManagerStep := SP_RunStp2;
+				ELSE
+					eManagerStep := SP_RunStp10; (* Skip *)
+				END_IF
+			SP_RunStp2: (* Unloading part on layering 1 *)
+				sRunData.TDataLoader.eModule := LMP_Table;
+				sRunData.TDataLoader.eTaker := LH_Head2;
+				sRunData.TDataLoader.iLayringPos := 1;
+				sRunData.TDataLoader.iLayringOffsetPos := 0;
+				sRunData.eCmdLoader := RCLo_PrepareTakePart;
+				eManagerStep := SP_RunStp3;
+			SP_RunStp3:
+				IF sRunData.sStatusLoader = RS_WaitRequest THEN
+					sRunData.eCmdLoader := RCLo_TakePart;
+					sRunData.TDataTable.iGiveTakeLayeringPosition := sRunData.TDataLoader.iLayringPos;
+					sRunData.TDataTable.iGiveTakeLayeringOffsetPosition := sRunData.TDataLoader.iLayringOffsetPos;
+					sRunData.eCmdTable := RCT_GivePart;
+					eManagerStep := SP_RunStp4;
+				END_IF
+			SP_RunStp4:
+				IF sRunData.sStatusLoader = RS_WaitRequest AND  sRunData.sStatusTable = RS_WaitRequest  THEN
+					sRunData.eCmdLoader := RCLo_Cleaning;
+					eManagerStep := SP_RunStp5;
+				END_IF
+			SP_RunStp5:
+				IF sRunData.sStatusLoader = RS_WaitRequest  THEN
+					IF sRunData.TDataLoader.aTPartData[LH_Head2].bToReject THEN
+						sRunData.TDataLoader.eModule := LMP_Reject;
+					ELSIF sProductionCmd.TRequestSample.Activate THEN
+						sRunData.TDataLoader.eModule := LMP_Sample;
+						sProductionCmd.TRequestSample.Activate := FALSE;
+					ELSE
+						sProductionCmd.TAutoSampling.iPeriodCnt := sProductionCmd.TAutoSampling.iPeriodCnt + 1;
+						IF sProductionCmd.TAutoSampling.bEnable AND (sProductionCmd.TAutoSampling.iPeriodCnt >= (sProductionCmd.TAutoSampling.iPeriod - sProductionCmd.TAutoSampling.iBatchSize)) THEN
+							sRunData.TDataLoader.eModule := LMP_Sample;
+							sProductionCmd.TAutoSampling.iBatchCnt := sProductionCmd.TAutoSampling.iBatchCnt + 1;
+							IF sProductionCmd.TAutoSampling.iBatchCnt >= sProductionCmd.TAutoSampling.iBatchSize THEN
+								sProductionCmd.TAutoSampling.iBatchCnt := 0;
+								sProductionCmd.TAutoSampling.iPeriodCnt := 0;
+							END_IF
+						ELSE
+							sRunData.TDataLoader.eModule := LMP_Lift2;
+						END_IF
+					END_IF
+					sRunData.eCmdLoader := RCLo_PrepareDropPart;
+					eManagerStep := SP_RunStp6;
+				END_IF
+			SP_RunStp6:
+				IF sRunData.sStatusLoader = RS_WaitRequest THEN
+					sRunData.eCmdLoader := RCLo_GivePart;
+					eManagerStep := SP_RunStp7;
+				END_IF
+			SP_RunStp7:
+				IF sRunData.sStatusLoader = RS_WaitRequest THEN
+					eManagerStep := SP_RunStp10;
+				END_IF
+			SP_RunStp10: (* Load Part on TurnOver *)
+				eRestartStep := SP_RunStp10;
+				eRestartLoaderStep := SP_RunStp12;
+				IF bNeedNewPart AND NOT sRunData.TDataTurnOver.aTPartData[TO_Arm].bPartPresent AND NOT sRunData.TDataTurnOver.aTPartData[TO_Fix].bPartPresent THEN
+					sRunData.TDataLoader.eModule := LMP_Lift1;
+					sRunData.TDataLoader.eTaker := LH_Head1;
+					sRunData.eCmdLoader := RCLo_PrepareTakePart;
+					eManagerStep := SP_RunStp11;
+				ELSE
+					eManagerStep := SP_RunStp20; (* Skip *)
+				END_IF
+			SP_RunStp11:
+				IF sRunData.sStatusLoader = RS_WaitRequest THEN
+					sRunData.eCmdLoader := RCLo_TakePart;
+					eManagerStep := SP_RunStp12;
+				END_IF
+			SP_RunStp12:
+				IF sRunData.sStatusLoader = RS_WaitRequest THEN
+					(* Check if a part was taken or not *)
+					IF sRunData.TDataLoader.aTPartData[LH_Head1].bPartPresent THEN
+						sRunData.eCmdLoader := RCLo_PrepareDropPart;
+						sRunData.TDataLoader.eModule := LMP_TurnOverArm;
+						eManagerStep := SP_RunStp13;
+					ELSE
+						eManagerStep := SP_RunStp10;
+					END_IF
+				END_IF
+			SP_RunStp13:
+				IF sRunData.sStatusLoader = RS_WaitRequest THEN
+					IF sRunData.TDataLoader.eModule = LMP_TurnOverArm THEN
+						sRunData.eCmdTurnOver := RCTO_TakePart;
+					END_IF
+					sRunData.eCmdLoader := RCLo_GivePart;
+					eManagerStep := SP_RunStp14;
+				END_IF
+			SP_RunStp14:
+				IF sRunData.sStatusLoader = RS_WaitRequest AND sRunData.sStatusTurnOver = RS_WaitRequest THEN
+					eManagerStep := SP_RunStp20;
+				END_IF
+			SP_RunStp20: (* Unloading finish, proceed cleaning and turn over*)
+				eRestartStep := SP_RunStp20;
+				eRestartLoaderStep := SP_RunStp20;
+				IF iPartOnProcess = 0 AND NOT bNeedNewPart THEN
+					eManagerStep := SP_RunStp100;
+				ELSE
+					sRunData.eCmdLoader := RCLo_MoveToSafe;
+					eManagerStep := SP_RunStp21;
+				END_IF
+			SP_RunStp21:
+				IF sRunData.sStatusLoader = RS_WaitRequest THEN
+					IF sRunData.TDataTurnOver.aTPartData[TO_Arm].bPartPresent THEN
+						sRunData.eCmdTurnOver := RCTO_Turn;
+					END_IF
+					IF NOT bTableIsClean THEN
+						sRunData.eCmdTable := RCT_Clean;
+					END_IF
+					eManagerStep := SP_RunStp22;
+				END_IF
+			SP_RunStp22: (*Cleaning Table and proceed turn over*)
+				IF sRunData.sStatusTable = RS_WaitRequest  AND sRunData.sStatusTurnOver = RS_WaitRequest THEN
+					bTableIsClean := TRUE;
+					eManagerStep := SP_RunStp23;
+				END_IF
+			SP_RunStp23:
+				eRestartStep := SP_RunStp23;
+				eRestartLoaderStep := SP_RunStp26;
+				IF sRunData.TDataTurnOver.aTPartData[TO_Fix].bPartPresent THEN
+					bTableIsClean := FALSE;
+					eManagerStep := SP_RunStp24;
+				ELSE
+					eManagerStep := SP_RunStp50; (* Skip *)
+				END_IF
+			SP_RunStp24: (* Move part from turn over *)
+				sRunData.TDataLoader.eModule := LMP_TurnOverFix;
+				sRunData.TDataLoader.eTaker := LH_Head2;
+				sRunData.eCmdLoader := RCLo_PrepareTakePart;
+				eManagerStep := SP_RunStp25;
+			SP_RunStp25:
+				IF sRunData.sStatusLoader = RS_WaitRequest THEN
+					sRunData.eCmdLoader := RCLo_TakePart;
+					sRunData.eCmdTurnOver := RCTO_GivePart;
+					eManagerStep := SP_RunStp26;
+				END_IF
+			SP_RunStp26:
+				IF sRunData.sStatusLoader = RS_WaitRequest AND sRunData.sStatusTurnOver = RS_WaitRequest THEN
+					sRunData.TDataLoader.eModule := LMP_Table;
+					sRunData.TDataLoader.iLayringPos := 1;
+					sRunData.TDataLoader.iLayringOffsetPos := 0;
+					sRunData.eCmdLoader := RCLo_PrepareDropPart;
+					eManagerStep := SP_RunStp28;
+				END_IF
+			SP_RunStp28:
+				IF sRunData.sStatusLoader = RS_WaitRequest THEN
+					sRunData.eCmdLoader := RCLo_GivePart;
+					sRunData.TDataTable.iGiveTakeLayeringPosition := sRunData.TDataLoader.iLayringPos;
+					sRunData.TDataTable.iGiveTakeLayeringOffsetPosition := sRunData.TDataLoader.iLayringOffsetPos;
+					sRunData.eCmdTable := RCT_TakePart;
+					eManagerStep := SP_RunStp29;
+				END_IF
+			SP_RunStp29:
+				IF sRunData.sStatusLoader = RS_WaitRequest AND sRunData.sStatusTable = RS_WaitRequest THEN
+					(* Reject part if not correctly dropped *)
+					IF sRunData.TDataLoader.aTPartData[LH_Head2].bPartPresent THEN
+						eManagerStep := SP_RunStp30;
+					ELSE
+						eManagerStep := SP_RunStp50;
+					END_IF
+				END_IF
+			SP_RunStp30:
+				sRunData.TDataLoader.eModule := LMP_Reject;
+				sRunData.eCmdLoader := RCLo_PrepareDropPart;
+				eManagerStep := SP_RunStp13;
+			SP_RunStp50: (* Launch loader to safe *)
+				eRestartStep := SP_RunStp50;
+				eRestartLoaderStep := SP_RunStp50;
+				sRunData.eCmdLoader := RCLo_MoveToSafe;
+				eManagerStep := SP_RunStp51;
+			SP_RunStp51:
+				IF sRunData.sStatusLoader = RS_WaitRequest AND bPearlingFinishOnTableSide THEN
+					(* Pearling finish *)
+					bReadyForPearling := FALSE;
+					eManagerStep := SP_RunStp52;
+				END_IF
+			SP_RunStp52:
+				eRestartStep := SP_RunStp53;
+				eRestartLoaderStep := SP_RunStp53;
+				sRunData.eCmdTable := RCT_TurnAndClean;
+				eWorkingTableSide := ePearlingTableSide;
+				eManagerStep := SP_RunStp53;
+			SP_RunStp53: (*Turning Table *)
+				IF sRunData.sStatusTable = RS_ProcessRequest2  THEN
+					bReadyForPearling := TRUE;
+					eManagerStep := SP_RunStp54;
+				END_IF
+			SP_RunStp54: (*Cleaning Table *)
+				IF sRunData.sStatusTable = RS_WaitRequest AND  sRunData.sStatusLoader = RS_WaitRequest  THEN
+					bTableIsClean := TRUE;
+					eManagerStep := SP_RunStp1;
+				END_IF
+			SP_RunStp100: (*End of recipe *)
+				bReadyForPearling := FALSE;
+				sRunData.eCmdLoader := RCLo_EndOfRecipe;
+				eManagerStep := SP_RunStp101;
+			SP_RunStp101: (*Loader in safe and lift in unload position *)
+				IF sRunData.sStatusLoader = RS_WaitRequest  AND sRunData.sStatusPearling = RS_WaitRequest THEN
+					eManagerStep := SP_RunStp0;
+				END_IF
+		END_CASE
+	END_IF
+	IF bSimPearling AND  bReadyForPearling THEN
+		IF sRunData.TDataTable.aTPartData[0,0,ePearlingTableSide].bPartPresent AND  sConfigFileData.asPearlingData[PS_SUS].THead[PH_Left].nNbOfPearls > 0 THEN
+			sRunData.TDataTable.aTPartData[0,0,ePearlingTableSide].abPearlingDone[PH_Left,PS_SUS] := TRUE;
+		END_IF
+		IF sRunData.TDataTable.aTPartData[0,0,ePearlingTableSide].bPartPresent AND  sConfigFileData.asPearlingData[PS_SUS].THead[PH_Right].nNbOfPearls > 0 THEN
+			sRunData.TDataTable.aTPartData[0,0,ePearlingTableSide].abPearlingDone[PH_Right,PS_SUS] := TRUE;
+		END_IF
+		IF sRunData.TDataTable.aTPartData[1,0,ePearlingTableSide].bPartPresent AND  sConfigFileData.asPearlingData[PS_SOUS].THead[PH_Left].nNbOfPearls > 0 THEN
+			sRunData.TDataTable.aTPartData[1,0,ePearlingTableSide].abPearlingDone[PH_Left,PS_SOUS] := TRUE;
+		END_IF
+		IF sRunData.TDataTable.aTPartData[1,0,ePearlingTableSide].bPartPresent AND  sConfigFileData.asPearlingData[PS_SOUS].THead[PH_Right].nNbOfPearls > 0 THEN
+			sRunData.TDataTable.aTPartData[1,0,ePearlingTableSide].abPearlingDone[PH_Right,PS_SOUS] := TRUE;
+		END_IF
+	ELSIF  NOT bSimPearling AND sRunData.sStatusPearling = RS_WaitRequest  AND  bReadyForPearling THEN
+		(* Pearling does nothing, launch pearling if there is part to pearl *)
+		sRunData.TDataPearling.abUseSpindle[PH_Left] := FALSE;
+		sRunData.TDataPearling.abUseSpindle[PH_Right] := FALSE;
+		IF 	sRunData.TDataTable.aTPartData[0,0,ePearlingTableSide].bPartPresent AND
+			NOT sRunData.TDataTable.aTPartData[0,0,ePearlingTableSide].abPearlingDone[PH_Left,PS_SUS] AND
+			sConfigFileData.asPearlingData[PS_SUS].THead[PH_Left].nNbOfPearls > 0 THEN
+			(* Launch pearling on this part *)
+			sRunData.TDataPearling.sPearlingData := sConfigFileData.asPearlingData[PS_SUS].THead[PH_Left];
+			sRunData.TDataPearling.abUseSpindle[PH_Left] := TRUE;
+			sRunData.TDataPearling.iLayringPos := 0;
+			sRunData.TDataPearling.iLayringOffsetPos := 0;
+			sRunData.TDataPearling.apsPartData[PH_Left] := ADR(sRunData.TDataTable.aTPartData[0,0,ePearlingTableSide]);
+			sRunData.TDataPearling.bForceSharpenAfterPearling := sConfigFileData.asPearlingData[PS_SUS].THead[PH_Right].nNbOfPearls = 0;
+			sRunData.eCmdPearling := RCP_Pearl;
+		ELSIF sRunData.TDataTable.aTPartData[0,0,ePearlingTableSide].bPartPresent AND
+			NOT sRunData.TDataTable.aTPartData[0,0,ePearlingTableSide].abPearlingDone[PH_Right,PS_SUS] AND
+			sConfigFileData.asPearlingData[PS_SUS].THead[PH_Right].nNbOfPearls > 0 THEN
+			(* Launch pearling on this part *)
+			sRunData.TDataPearling.sPearlingData := sConfigFileData.asPearlingData[PS_SUS].THead[PH_Right];
+			sRunData.TDataPearling.abUseSpindle[PH_Right] := TRUE;
+			sRunData.TDataPearling.iLayringPos := 0;
+			sRunData.TDataPearling.iLayringOffsetPos := 0;
+			sRunData.TDataPearling.apsPartData[PH_Right] := ADR(sRunData.TDataTable.aTPartData[0,0,ePearlingTableSide]);
+			sRunData.TDataPearling.bForceSharpenAfterPearling := TRUE;
+			sRunData.eCmdPearling := RCP_Pearl;
+		ELSIF 	sRunData.TDataTable.aTPartData[1,0,ePearlingTableSide].bPartPresent AND
+			NOT sRunData.TDataTable.aTPartData[1,0,ePearlingTableSide].abPearlingDone[PH_Left,PS_SOUS] AND
+			sConfigFileData.asPearlingData[PS_SOUS].THead[PH_Left].nNbOfPearls > 0 THEN
+			(* Launch pearling on this part *)
+			sRunData.TDataPearling.sPearlingData := sConfigFileData.asPearlingData[PS_SOUS].THead[PH_Left];
+			sRunData.TDataPearling.abUseSpindle[PH_Left] := TRUE;
+			sRunData.TDataPearling.iLayringPos := 1;
+			sRunData.TDataPearling.iLayringOffsetPos := 0;
+			sRunData.TDataPearling.apsPartData[PH_Left] := ADR(sRunData.TDataTable.aTPartData[1,0,ePearlingTableSide]);
+			sRunData.TDataPearling.bForceSharpenAfterPearling := sConfigFileData.asPearlingData[PS_SOUS].THead[PH_Right].nNbOfPearls = 0;
+			sRunData.eCmdPearling := RCP_Pearl;
+		ELSIF sRunData.TDataTable.aTPartData[1,0,ePearlingTableSide].bPartPresent AND
+			NOT sRunData.TDataTable.aTPartData[1,0,ePearlingTableSide].abPearlingDone[PH_Right,PS_SOUS] AND
+			sConfigFileData.asPearlingData[PS_SOUS].THead[PH_Right].nNbOfPearls > 0 THEN
+			(* Launch pearling on this part *)
+			sRunData.TDataPearling.sPearlingData := sConfigFileData.asPearlingData[PS_SOUS].THead[PH_Right];
+			sRunData.TDataPearling.abUseSpindle[PH_Right] := TRUE;
+			sRunData.TDataPearling.iLayringPos := 1;
+			sRunData.TDataPearling.iLayringOffsetPos := 0;
+			sRunData.TDataPearling.apsPartData[PH_Right] := ADR(sRunData.TDataTable.aTPartData[1,0,ePearlingTableSide]);
+			sRunData.TDataPearling.bForceSharpenAfterPearling := TRUE;
+			sRunData.eCmdPearling := RCP_Pearl;
+		END_IF
+	END_IF
+
+ELSIF sConfigFileData.bParallelProduction OR bLayeringWithTwoParts THEN
+
+	IF sRunData.sStatusPearling <> RS_WaitRequest THEN
+		bPearlingFinishOnTableSide := FALSE;
+	ELSE
+		bPearlingFinishOnTableSide := TRUE;
+		IF bLayeringWithTwoParts THEN
+			IF	   ( sRunData.TDataTable.aTPartData[0,0,ePearlingTableSide].bPartPresent AND NOT (sRunData.TDataTable.aTPartData[0,0,ePearlingTableSide].abPearlingDone[PH_Left,PS_SUS] OR sRunData.TDataTable.aTPartData[0,0,ePearlingTableSide].abPearlingDone[PH_Right,PS_SUS])) 
+				OR ( sRunData.TDataTable.aTPartData[0,1,ePearlingTableSide].bPartPresent AND NOT (sRunData.TDataTable.aTPartData[0,1,ePearlingTableSide].abPearlingDone[PH_Left,PS_SUS] OR sRunData.TDataTable.aTPartData[0,1,ePearlingTableSide].abPearlingDone[PH_Right,PS_SUS])) 
+				OR ( sRunData.TDataTable.aTPartData[1,0,ePearlingTableSide].bPartPresent AND NOT (sRunData.TDataTable.aTPartData[1,0,ePearlingTableSide].abPearlingDone[PH_Left,PS_SUS] OR sRunData.TDataTable.aTPartData[1,0,ePearlingTableSide].abPearlingDone[PH_Right,PS_SUS])) 
+				OR ( sRunData.TDataTable.aTPartData[1,1,ePearlingTableSide].bPartPresent AND NOT (sRunData.TDataTable.aTPartData[1,1,ePearlingTableSide].abPearlingDone[PH_Left,PS_SUS] OR sRunData.TDataTable.aTPartData[1,1,ePearlingTableSide].abPearlingDone[PH_Right,PS_SUS])) 
+				THEN
+				bPearlingFinishOnTableSide := FALSE;
+			END_IF
+		ELSE
+			IF	   ( sRunData.TDataTable.aTPartData[0,0,ePearlingTableSide].bPartPresent AND NOT (sRunData.TDataTable.aTPartData[0,0,ePearlingTableSide].abPearlingDone[PH_Left,PS_SUS] OR sRunData.TDataTable.aTPartData[0,0,ePearlingTableSide].abPearlingDone[PH_Right,PS_SUS])) 
+				OR ( sRunData.TDataTable.aTPartData[1,0,ePearlingTableSide].bPartPresent AND NOT (sRunData.TDataTable.aTPartData[1,0,ePearlingTableSide].abPearlingDone[PH_Left,PS_SUS] OR sRunData.TDataTable.aTPartData[1,0,ePearlingTableSide].abPearlingDone[PH_Right,PS_SUS])) 
+				THEN
+				bPearlingFinishOnTableSide := FALSE;
+			END_IF
+		END_IF
+	END_IF
+	IF bUse103171OptimA1 THEN
+		CASE eManagerStep OF
+			SP_InitStp1:	(*Recovery, Drop plate if we have one*)
+				sRunData.eCmdPearling := RCP_CheckSharpen;
+				bReadyForPearling := FALSE;
+				bTableIsClean := FALSE;
+				IF sRunData.TDataLoader.bPlatePresent THEN
+					sRunData.eCmdLoader := RCLo_SwitchPlate;
+					eManagerStep := SP_InitStp2;
+				ELSE
+					eManagerStep := SP_InitStp3;
+				END_IF
+			SP_InitStp2: (* Switch plate done *)
+				IF sRunData.sStatusLoader = RS_WaitRequest THEN
+					eManagerStep := SP_InitStp3;
+				END_IF
+			SP_InitStp3: (* Do we need a table turn ? *)
+				IF  sRunData.TDataTable.eTableSide <>  eWorkingTableSide THEN
+					sRunData.eCmdTable := RCT_Turn;
+					eManagerStep := SP_InitStp4;
+				ELSE
+					eManagerStep := SP_InitStp5;
+				END_IF
+			SP_InitStp4:
+					IF sRunData.sStatusTable = RS_WaitRequest THEN
+						eManagerStep := SP_InitStp5;
+					END_IF
+			SP_InitStp5:
+				bReadyForPearling := TRUE;
+				IF sRunData.TDataLoader.aTPartData[LH_Head1].bPartPresent THEN
+					eManagerStep := eRestartLoaderStep;
+				ELSE
+					eManagerStep := eRestartStep;
+				END_IF
+	(* Running Step *)
+			SP_RunStp1:
+				sRunData.TDataLoader.iLayringOffsetPos := 0;
+				sRunData.TDataTable.iGiveTakeLayeringOffsetPosition := sRunData.TDataLoader.iLayringOffsetPos;
+				eRestartStep := SP_RunStp1;
+				eRestartLoaderStep := SP_RunStp1;
+				// Check if parts can be taken on table
+				IF sRunData.TDataTable.aTPartData[0,0,sRunData.TDataTable.eTableSide].bPartPresent
+						AND NOT sRunData.TDataLoader.aTPartData[0].bPartPresent THEN
+					// Take the part on table with head1
+					bTableIsClean := FALSE;
+					sRunData.TDataLoader.eModule := LMP_Table;
+					sRunData.TDataLoader.eTaker := LH_Head1;
+					sRunData.TDataLoader.iLayringPos := 0;
+					eManagerStep := SP_RunStp100;
+				ELSIF sRunData.TDataTable.aTPartData[1,0,sRunData.TDataTable.eTableSide].bPartPresent
+						AND NOT sRunData.TDataLoader.aTPartData[1].bPartPresent THEN
+					// Take the part on table with head2
+					bTableIsClean := FALSE;
+					sRunData.TDataLoader.eModule := LMP_Table;
+					sRunData.TDataLoader.eTaker := LH_Head2;
+					sRunData.TDataLoader.iLayringPos := 1;
+					eManagerStep := SP_RunStp100;
+				ELSIF NOT sRunData.TDataLoader.aTPartData[0].bPartPresent 
+						AND NOT sRunData.TDataLoader.aTPartData[1].bPartPresent THEN
+					// Move loader to safe for cleaning and reload
+					sRunData.eCmdLoader := RCLo_MoveToSafe;
+					eManagerStep := SP_RunStp50;
+				ELSE
+					// Move loader to safe and drop part
+					sRunData.eCmdLoader := RCLo_MoveToSafe;
+					eManagerStep := SP_RunStp2;
+				END_IF
+			SP_RunStp2: // Drop parts and check table
+				IF sRunData.sStatusLoader = RS_WaitRequest THEN
+					// Check if table can be cleaned
+					IF sRunData.sStatusTable = RS_WaitRequest
+							AND NOT sRunData.TDataTable.aTPartData[0,0,sRunData.TDataTable.eTableSide].bPartPresent
+							AND NOT sRunData.TDataTable.aTPartData[1,0,sRunData.TDataTable.eTableSide].bPartPresent 
+							AND NOT bTableIsClean THEN
+						// Clean the table
+						sRunData.eCmdTable := RCT_Clean;
+					END_IF
+					// Check if part must be dropped
+					IF sRunData.TDataLoader.aTPartData[0].bPartPresent THEN
+						// Drop part on head 1
+						sRunData.TDataLoader.eTaker := LH_Head1;
+						eManagerStep := SP_RunStp200;
+					ELSIF sRunData.TDataLoader.aTPartData[1].bPartPresent THEN
+						// Drop part on head 2
+						sRunData.TDataLoader.eTaker := LH_Head2;
+						eManagerStep := SP_RunStp200;
+					ELSIF sRunData.sStatusTable = RS_WaitRequest THEN
+						// No more parts on head and table is clean
+						bTableIsClean := TRUE;
+						eManagerStep := SP_RunStp1;
+					END_IF
+				END_IF
+	
+			SP_RunStp50: // Do cleaning and reload from lift
+				eRestartStep := SP_RunStp50;
+				eRestartLoaderStep := SP_RunStp50;
+				IF sRunData.sStatusLoader = RS_WaitRequest THEN
+					// Check if table can be cleaned
+					IF sRunData.sStatusTable = RS_WaitRequest AND NOT bTableIsClean THEN
+						// Clean the table
+						sRunData.eCmdTable := RCT_Clean;
+					END_IF
+					IF bNeedNewPart THEN			// HFO : add "or sProdLot.dProdQty < sProdLot.dLotQty" to pearl the 2 last pieces
+						IF NOT sRunData.TDataLoader.aTPartData[0].bPartPresent AND NOT bTablePos2NeedPart THEN
+							sRunData.TDataLoader.eModule := LMP_Lift1;
+							sRunData.TDataLoader.eTaker := LH_Head1;
+							sRunData.eCmdLoader := RCLo_PrepareTakePart;
+							eManagerStep := SP_RunStp55;
+						ELSIF NOT sRunData.TDataLoader.aTPartData[1].bPartPresent THEN
+							sRunData.TDataLoader.eModule := LMP_Lift1;
+							sRunData.TDataLoader.eTaker := LH_Head2;
+							sRunData.eCmdLoader := RCLo_PrepareTakePart;
+							eManagerStep := SP_RunStp55;
+						ELSIF sRunData.sStatusTable = RS_WaitRequest THEN
+							bTableIsClean := TRUE;
+							eManagerStep := SP_RunStp70;
+						END_IF	
+					ELSIF sRunData.sStatusTable = RS_WaitRequest AND sProdLot.dProdQty < sProdLot.dLotQty THEN			// TODO : HFO, add elseif to pearl the 2 last pieces
+						bTableIsClean := TRUE;
+						eManagerStep := SP_RunStp70;
+					ELSE
+						eManagerStep := SP_RunStp80;
+						// eManagerStep := SP_RunStp160; 	// purging
+					END_IF
+				END_IF				
+			SP_RunStp55:
+				IF sRunData.sStatusLoader = RS_WaitRequest THEN
+					sRunData.eCmdLoader := RCLo_TakePart;
+					eManagerStep := SP_RunStp60;
+				END_IF
+			SP_RunStp60:
+				IF sRunData.sStatusLoader = RS_WaitRequest 
+						AND sRunData.sStatusTable = RS_WaitRequest THEN
+					bTableIsClean := TRUE;
+					eManagerStep := SP_RunStp50;
+				END_IF
+			SP_RunStp70: (* Drop part on layering *)
+				IF sRunData.sStatusTable = RS_WaitRequest THEN
+					eRestartStep := SP_RunStp70;
+					eRestartLoaderStep := SP_RunStp70;
+					IF sRunData.TDataLoader.aTPartData[0].bPartPresent THEN
+						IF sRunData.TDataLoader.aTPartData[0].bToReject THEN
+							sRunData.TDataLoader.eModule := LMP_Reject;
+							sRunData.TDataLoader.eTaker := LH_Head1;
+							sRunData.eCmdLoader := RCLo_PrepareDropPart;
+							eManagerStep := SP_RunStp150;
+						ELSE
+							sRunData.TDataLoader.eModule := LMP_Table;
+							sRunData.TDataLoader.eTaker := LH_Head1;
+							sRunData.TDataLoader.iLayringPos := 0;
+							sRunData.eCmdLoader := RCLo_PrepareDropPart;
+							eManagerStep := SP_RunStp75;
+						END_IF
+					ELSIF sRunData.TDataLoader.aTPartData[1].bPartPresent THEN
+						IF sRunData.TDataLoader.aTPartData[1].bToReject THEN
+							sRunData.TDataLoader.eModule := LMP_Reject;
+							sRunData.TDataLoader.eTaker := LH_Head2;
+							sRunData.eCmdLoader := RCLo_PrepareDropPart;
+							bTablePos2NeedPart := TRUE;
+							eManagerStep := SP_RunStp150;
+						ELSE
+							sRunData.TDataLoader.eModule := LMP_Table;
+							sRunData.TDataLoader.eTaker := LH_Head2;
+							sRunData.TDataLoader.iLayringPos := 1;
+							sRunData.eCmdLoader := RCLo_PrepareDropPart;
+							bTablePos2NeedPart := FALSE;
+							eManagerStep := SP_RunStp75;
+						END_IF
+					ELSE
+						// Loading finished, turn table
+						eManagerStep := SP_RunStp80;
+					END_IF
+				END_IF
+			SP_RunStp75:
+				IF sRunData.sStatusLoader = RS_WaitRequest THEN
+					sRunData.TDataTable.iGiveTakeLayeringPosition := sRunData.TDataLoader.iLayringPos;
+					sRunData.eCmdLoader := RCLo_GivePart;
+					sRunData.eCmdTable := RCT_TakePart;
+					eManagerStep := SP_RunStp77;
+				END_IF
+			SP_RunStp77:
+				IF sRunData.sStatusLoader = RS_WaitRequest AND  sRunData.sStatusTable = RS_WaitRequest  THEN
+					eManagerStep := SP_RunStp70;
+				END_IF		
+			SP_RunStp80:
+				IF sRunData.sStatusLoader = RS_WaitRequest AND  sRunData.sStatusTable = RS_WaitRequest  THEN
+					sRunData.eCmdLoader := RCLo_MoveToSafe;
+					eManagerStep := SP_RunStp85;
+				END_IF		
+			SP_RunStp85:
+				IF sRunData.sStatusLoader = RS_WaitRequest AND bPearlingFinishOnTableSide THEN
+					(* Pearling finish *)
+					bReadyForPearling := FALSE;
+					eManagerStep := SP_RunStp90;
+				END_IF
+			SP_RunStp90:
+				eRestartStep := SP_RunStp96;
+				eRestartLoaderStep := SP_RunStp93;
+				sRunData.eCmdTable := RCT_Turn;
+				eWorkingTableSide := ePearlingTableSide;
+				eManagerStep := SP_RunStp93;
+			SP_RunStp93: (*Turning Table *)
+				IF sRunData.sStatusTable = RS_ProcessRequest2 THEN
+					IF iPartOnProcess = 0 AND NOT bNeedNewPart THEN
+						eManagerStep := SP_RunStp300;
+					ELSE
+						bReadyForPearling := TRUE;
+						eManagerStep := SP_RunStp96;
+					END_IF
+				END_IF
+			SP_RunStp96: (*Cleaning Table *)
+				IF sRunData.sStatusTable = RS_WaitRequest  AND  sRunData.sStatusLoader = RS_WaitRequest  THEN
+					bTableIsClean := TRUE;
+					eManagerStep := SP_RunStp1;
+				END_IF
+			SP_RunStp100: (* Unloading part on layering *)
+				IF sRunData.TDataTable.aTPartData[0,0,sRunData.TDataTable.eTableSide].bPartPresent OR sRunData.TDataTable.aTPartData[1,0,sRunData.TDataTable.eTableSide].bPartPresent THEN
+					eRestartStep := SP_RunStp100;
+					eRestartLoaderStep := SP_RunStp100;
+					sRunData.TDataLoader.eModule := LMP_Table;
+					sRunData.eCmdLoader := RCLo_PrepareTakePart;
+					eManagerStep := SP_RunStp105;
+				ELSE
+					eManagerStep := SP_RunStp1;
+				END_IF
+			SP_RunStp105:
+				IF sRunData.sStatusLoader = RS_WaitRequest THEN
+					sRunData.eCmdLoader := RCLo_TakePart;
+					sRunData.TDataTable.iGiveTakeLayeringPosition := sRunData.TDataLoader.iLayringPos;
+					sRunData.TDataTable.iGiveTakeLayeringOffsetPosition := sRunData.TDataLoader.iLayringOffsetPos;
+					sRunData.eCmdTable := RCT_GivePart;
+					eManagerStep := SP_RunStp110;
+				END_IF
+			SP_RunStp110:
+				IF sRunData.sStatusLoader = RS_WaitRequest AND  sRunData.sStatusTable = RS_WaitRequest  THEN
+					eManagerStep := SP_RunStp1;
+				END_IF
+			SP_RunStp150: // Give bad part to the reject
+				IF sRunData.sStatusLoader = RS_WaitRequest THEN
+					sRunData.eCmdLoader := RCLo_GivePart;
+					eManagerStep := SP_RunStp151;
+				END_IF
+			SP_RunStp151:
+				IF sRunData.sStatusLoader = RS_WaitRequest THEN
+					eManagerStep := SP_RunStp50;
+				END_IF
+			SP_RunStp160: // TODO : (HFO) // Steps for purging 
+				IF sRunData.sStatusLoader = RS_WaitRequest AND  sRunData.sStatusTable = RS_WaitRequest  THEN
+					sRunData.eCmdLoader := RCLo_MoveToSafe;
+					//eManagerStep := SP_RunStp85;
+				END_IF		
+			SP_RunStp200:
+				IF sRunData.sStatusLoader = RS_WaitRequest THEN
+					IF sRunData.TDataLoader.aTPartData[LH_Head1].bToReject THEN
+						sRunData.TDataLoader.eModule := LMP_Reject;
+					ELSIF sProductionCmd.TRequestSample.Activate THEN
+						sRunData.TDataLoader.eModule := LMP_Sample;
+						sProductionCmd.TRequestSample.Activate := FALSE;
+					ELSE
+						sProductionCmd.TAutoSampling.iPeriodCnt := sProductionCmd.TAutoSampling.iPeriodCnt + 1;
+						IF sProductionCmd.TAutoSampling.bEnable AND (sProductionCmd.TAutoSampling.iPeriodCnt >= (sProductionCmd.TAutoSampling.iPeriod - sProductionCmd.TAutoSampling.iBatchSize)) THEN
+							sRunData.TDataLoader.eModule := LMP_Sample;
+							sProductionCmd.TAutoSampling.iBatchCnt := sProductionCmd.TAutoSampling.iBatchCnt + 1;
+							IF sProductionCmd.TAutoSampling.iBatchCnt >= sProductionCmd.TAutoSampling.iBatchSize THEN
+								sProductionCmd.TAutoSampling.iBatchCnt := 0;
+								sProductionCmd.TAutoSampling.iPeriodCnt := 0;
+							END_IF
+						ELSE
+							sRunData.TDataLoader.eModule := LMP_Lift2;
+						END_IF
+					END_IF
+					sRunData.eCmdLoader := RCLo_PrepareDropPart;
+					eManagerStep := SP_RunStp205;
+				END_IF
+			SP_RunStp205:
+				IF sRunData.sStatusLoader = RS_WaitRequest THEN
+					sRunData.eCmdLoader := RCLo_GivePart;
+					eManagerStep := SP_RunStp210;
+				END_IF
+			SP_RunStp210:
+				IF sRunData.sStatusLoader = RS_WaitRequest THEN
+					bTableIsClean := TRUE;
+					eManagerStep := SP_RunStp2;
+				END_IF
+			SP_RunStp300: (*End of recipe *)
+				bReadyForPearling := FALSE;
+				sRunData.eCmdLoader := RCLo_EndOfRecipe;
+				eManagerStep := SP_RunStp305;
+			SP_RunStp305: (*Loader in safe and lift in unload position *)
+				IF sRunData.sStatusLoader = RS_WaitRequest  AND sRunData.sStatusPearling = RS_WaitRequest AND sRunData.sStatusTable = RS_WaitRequest THEN
+					eManagerStep := SP_RunStp0;
+				END_IF
+		END_CASE
+	ELSE
+		CASE eManagerStep OF
+			SP_InitStp1:	(*Recovery, Drop plate if we have one*)
+				sRunData.eCmdPearling := RCP_CheckSharpen;
+				bReadyForPearling := FALSE;
+				bTableIsClean := FALSE;
+				IF sRunData.TDataLoader.bPlatePresent THEN
+					sRunData.eCmdLoader := RCLo_SwitchPlate;
+					eManagerStep := SP_InitStp2;
+				ELSE
+					eManagerStep := SP_InitStp3;
+				END_IF
+			SP_InitStp2: (* Switch plate done *)
+				IF sRunData.sStatusLoader = RS_WaitRequest THEN
+					eManagerStep := SP_InitStp3;
+				END_IF
+			SP_InitStp3: (* Do we need a table turn ? *)
+				IF  sRunData.TDataTable.eTableSide <>  eWorkingTableSide THEN
+					sRunData.eCmdTable := RCT_Turn;
+					eManagerStep := SP_InitStp4;
+				ELSE
+					eManagerStep := SP_InitStp5;
+				END_IF
+			SP_InitStp4:
+					IF sRunData.sStatusTable = RS_WaitRequest THEN
+						eManagerStep := SP_InitStp5;
+					END_IF
+			SP_InitStp5:
+				bReadyForPearling := TRUE;
+				IF sRunData.TDataLoader.aTPartData[LH_Head1].bPartPresent THEN
+					eManagerStep := eRestartLoaderStep;
+				ELSE
+					eManagerStep := eRestartStep;
+				END_IF
+	(* Running Step *)
+			SP_RunStp1:
+				eRestartStep := SP_RunStp1;
+				eRestartLoaderStep := SP_RunStp7;
+				iRunLayering := 0;
+				iRunLayeringOffset := 0;
+				bLastPart := FALSE;
+				eManagerStep := SP_RunStp3;
+			SP_RunStp2:
+				bLastPart := FALSE;
+				IF bLayeringWithTwoParts THEN
+					IF iRunLayering=0 AND iRunLayeringOffset=0 THEN
+						iRunLayering := 0;
+						iRunLayeringOffset := 1;
+						eManagerStep := SP_RunStp3;
+					ELSIF iRunLayering=0 AND iRunLayeringOffset=1 THEN
+						iRunLayering := 1;
+						iRunLayeringOffset := 0;
+						eManagerStep := SP_RunStp3;
+					ELSIF iRunLayering=1 AND iRunLayeringOffset=0 THEN
+						iRunLayering := 1;
+						iRunLayeringOffset := 1;
+						bLastPart := TRUE;
+						eManagerStep := SP_RunStp3;
+					ELSE
+						eManagerStep := SP_RunStp20;
+					END_IF
+				ELSE
+					IF iRunLayering=0 AND iRunLayeringOffset=0 THEN
+						iRunLayering := 1;
+						iRunLayeringOffset := 0;
+						bLastPart := TRUE;
+						eManagerStep := SP_RunStp3;
+					ELSE
+						eManagerStep := SP_RunStp20;
+					END_IF
+				END_IF
+			SP_RunStp3:
+				IF sRunData.TDataTable.aTPartData[iRunLayering,iRunLayeringOffset,sRunData.TDataTable.eTableSide].bPartPresent THEN
+					bTableIsClean := FALSE;
+					eManagerStep := SP_RunStp4;
+				ELSE
+					eManagerStep := SP_RunStp2; (* Skip *)
+				END_IF
+			SP_RunStp4: (* Unloading part on layering*)
+				sRunData.TDataLoader.eModule := LMP_Table;
+				sRunData.TDataLoader.eTaker := LH_Head1;
+				sRunData.TDataLoader.iLayringPos := iRunLayering;
+				sRunData.TDataLoader.iLayringOffsetPos := iRunLayeringOffset;
+				sRunData.eCmdLoader := RCLo_PrepareTakePart;
+				eManagerStep := SP_RunStp5;
+			SP_RunStp5:
+				IF sRunData.sStatusLoader = RS_WaitRequest THEN
+					sRunData.eCmdLoader := RCLo_TakePart;
+					sRunData.TDataTable.iGiveTakeLayeringPosition := sRunData.TDataLoader.iLayringPos;
+					sRunData.TDataTable.iGiveTakeLayeringOffsetPosition := sRunData.TDataLoader.iLayringOffsetPos;
+					sRunData.eCmdTable := RCT_GivePart;
+					eManagerStep := SP_RunStp6;
+				END_IF
+			SP_RunStp6:
+				IF sRunData.sStatusLoader = RS_WaitRequest AND  sRunData.sStatusTable = RS_WaitRequest  THEN
+					IF bLastPart AND NOT bTableIsClean THEN
+						sRunData.eCmdLoader := RCLo_MoveToSafe;
+					END_IF
+					eManagerStep := SP_RunStp7;
+				END_IF
+			SP_RunStp7:
+				IF sRunData.sStatusLoader = RS_WaitRequest THEN
+					IF bLastPart AND NOT bTableIsClean THEN
+						sRunData.eCmdTable := RCT_Clean;
+					END_IF
+					IF sRunData.TDataLoader.aTPartData[LH_Head1].bToReject THEN
+						sRunData.TDataLoader.eModule := LMP_Reject;
+					ELSIF sProductionCmd.TRequestSample.Activate THEN
+						sRunData.TDataLoader.eModule := LMP_Sample;
+						sProductionCmd.TRequestSample.Activate := FALSE;
+					ELSE
+						sProductionCmd.TAutoSampling.iPeriodCnt := sProductionCmd.TAutoSampling.iPeriodCnt + 1;
+						IF sProductionCmd.TAutoSampling.bEnable AND (sProductionCmd.TAutoSampling.iPeriodCnt >= (sProductionCmd.TAutoSampling.iPeriod - sProductionCmd.TAutoSampling.iBatchSize)) THEN
+							sRunData.TDataLoader.eModule := LMP_Sample;
+							sProductionCmd.TAutoSampling.iBatchCnt := sProductionCmd.TAutoSampling.iBatchCnt + 1;
+							IF sProductionCmd.TAutoSampling.iBatchCnt >= sProductionCmd.TAutoSampling.iBatchSize THEN
+								sProductionCmd.TAutoSampling.iBatchCnt := 0;
+								sProductionCmd.TAutoSampling.iPeriodCnt := 0;
+							END_IF
+						ELSE
+							sRunData.TDataLoader.eModule := LMP_Lift2;
+						END_IF
+					END_IF
+					sRunData.eCmdLoader := RCLo_PrepareDropPart;
+					eManagerStep := SP_RunStp9;
+				END_IF
+			SP_RunStp9:
+				IF sRunData.sStatusLoader = RS_WaitRequest THEN
+					sRunData.eCmdLoader := RCLo_GivePart;
+					eManagerStep := SP_RunStp10;
+				END_IF
+			SP_RunStp10:
+				IF sRunData.sStatusLoader = RS_WaitRequest THEN
+					IF bUse103171OptimA1  THEN
+						eManagerStep := SP_RunStp11;
+					ELSE
+						IF sRunData.sStatusTable = RS_WaitRequest THEN
+							bTableIsClean := TRUE;
+							eManagerStep := SP_RunStp2;
+						END_IF
+					END_IF
+				END_IF
+			SP_RunStp11: (* During cleaning, load part on head 2*)
+				eRestartStep := SP_RunStp11;
+				eRestartLoaderStep := SP_RunStp11;
+				IF iPartOnProcess = 0 AND NOT bNeedNewPart THEN
+					eManagerStep := SP_RunStp100;
+				ELSE
+					eManagerStep := SP_RunStp12;
+				END_IF
+			SP_RunStp12:
+				sRunData.TDataLoader.eModule := LMP_Lift1;
+				sRunData.TDataLoader.eTaker := LH_Head1;
+				sRunData.eCmdLoader := RCLo_PrepareTakePart;
+				eManagerStep := SP_RunStp13;
+			SP_RunStp13:
+				IF sRunData.sStatusLoader = RS_WaitRequest THEN
+					sRunData.eCmdLoader := RCLo_TakePart;
+					eManagerStep := SP_RunStp14;
+				END_IF
+			SP_RunStp14:
+				IF sRunData.sStatusLoader = RS_WaitRequest THEN
+					(* Check if table has finished or not *)
+					IF sRunData.sStatusTable = RS_WaitRequest THEN
+						eManagerStep := SP_RunStp2;
+					ELSIF bUse103171OptimB5PreMoveXY THEN
+						(* Move to safe to save time *)
+						eManagerStep := SP_RunStp15;
+					END_IF
+				END_IF
+			SP_RunStp15:
+				eRestartStep := SP_RunStp15;
+				eRestartLoaderStep := SP_RunStp15;
+				sRunData.eCmdLoader := RCLo_MoveToSafe;
+				eManagerStep := SP_RunStp16;
+			SP_RunStp16:
+				IF sRunData.sStatusLoader = RS_WaitRequest AND sRunData.sStatusTable = RS_WaitRequest THEN
+					eManagerStep := SP_RunStp2;
+				END_IF
+	
+			SP_RunStp20: (* Unloading finish, proceed cleaning*)
+				eRestartStep := SP_RunStp20;
+				eRestartLoaderStep := SP_RunStp20;
+				IF iPartOnProcess = 0 AND NOT bNeedNewPart THEN
+					eManagerStep := SP_RunStp100;
+				ELSIF sRunData.sStatusTable = RS_WaitRequest THEN
+					sRunData.eCmdLoader := RCLo_MoveToSafe;
+					eManagerStep := SP_RunStp21;
+				ELSE
+					eManagerStep := SP_RunStp21;
+				END_IF
+			SP_RunStp21:
+				IF sRunData.sStatusLoader = RS_WaitRequest THEN
+					IF NOT bTableIsClean THEN
+						sRunData.eCmdTable := RCT_Clean;
+					END_IF
+					IF bUse103171OptimA1 AND NOT sRunData.TDataLoader.aTPartData[LH_Head2].bPartPresent THEN
+						eManagerStep := SP_RunStp200;
+					ELSE
+						eManagerStep := SP_RunStp22;
+					END_IF
+				END_IF
+			SP_RunStp22: (*Cleaning Table*)
+				IF sRunData.sStatusTable = RS_WaitRequest THEN
+					bTableIsClean := TRUE;
+					eManagerStep := SP_RunStp40;
+				END_IF
+			SP_RunStp40: (* Load layering *)
+				eRestartStep := SP_RunStp40;
+				eRestartLoaderStep := SP_RunStp44;
+				iRunLayering := -1;
+				iRunLayeringOffset := 1;
+				eManagerStep := SP_RunStp41;
+			SP_RunStp41:
+				IF bLayeringWithTwoParts THEN
+					IF bNeedNewPart OR iRunLayeringOffset=0 THEN
+						IF iRunLayering=-1 THEN
+							iRunLayering := 0;
+							iRunLayeringOffset := 0;
+							eManagerStep := SP_RunStp42;
+						ELSIF iRunLayering=0 AND iRunLayeringOffset=0 THEN
+							iRunLayering := 0;
+							iRunLayeringOffset := 1;
+							eManagerStep := SP_RunStp42;
+						ELSIF iRunLayering=0 AND iRunLayeringOffset=1 THEN
+							iRunLayering := 1;
+							iRunLayeringOffset := 0;
+							eManagerStep := SP_RunStp42;
+						ELSIF iRunLayering=1 AND iRunLayeringOffset=0 THEN
+							iRunLayering := 1;
+							iRunLayeringOffset := 1;
+							eManagerStep := SP_RunStp42;
+						ELSE
+							eManagerStep := SP_RunStp50;
+						END_IF
+					ELSE
+						eManagerStep := SP_RunStp50;
+					END_IF
+				ELSE
+					IF bNeedNewPart THEN
+						IF iRunLayering=-1 THEN
+							iRunLayering := 0;
+							iRunLayeringOffset := 0;
+							eManagerStep := SP_RunStp42;
+						ELSIF iRunLayering=0 AND iRunLayeringOffset=0 THEN
+							iRunLayering := 1;
+							iRunLayeringOffset := 0;
+							eManagerStep := SP_RunStp42;
+						ELSE
+							eManagerStep := SP_RunStp50;
+						END_IF
+					ELSE
+						eManagerStep := SP_RunStp50;
+					END_IF
+				END_IF
+			SP_RunStp42:
+				IF NOT sRunData.TDataTable.aTPartData[iRunLayering,iRunLayeringOffset,sRunData.TDataTable.eTableSide].bPartPresent THEN
+					bTableIsClean := FALSE;
+					sRunData.TDataLoader.eModule := LMP_Lift1;
+					sRunData.TDataLoader.eTaker := LH_Head1;
+					sRunData.eCmdLoader := RCLo_PrepareTakePart;
+					eManagerStep := SP_RunStp43;
+				ELSE
+					eManagerStep := SP_RunStp41; (* Skip *)
+				END_IF
+			SP_RunStp43:
+				IF sRunData.sStatusLoader = RS_WaitRequest THEN
+					sRunData.eCmdLoader := RCLo_TakePart;
+					eManagerStep := SP_RunStp44;
+				END_IF
+			SP_RunStp44:
+				IF sRunData.sStatusLoader = RS_WaitRequest THEN
+					(* Check if a part was taken or not *)
+					IF sRunData.TDataLoader.aTPartData[LH_Head1].bPartPresent THEN
+						sRunData.TDataLoader.eModule := LMP_Table;
+						sRunData.TDataLoader.iLayringPos := iRunLayering;
+						sRunData.TDataLoader.iLayringOffsetPos := iRunLayeringOffset;
+						sRunData.eCmdLoader := RCLo_PrepareDropPart;
+						eManagerStep := SP_RunStp45;
+					ELSE
+						eManagerStep := SP_RunStp42;
+					END_IF
+				END_IF
+			SP_RunStp45:
+				IF sRunData.sStatusLoader = RS_WaitRequest THEN
+					sRunData.eCmdLoader := RCLo_GivePart;
+					sRunData.TDataTable.iGiveTakeLayeringPosition := sRunData.TDataLoader.iLayringPos;
+					sRunData.TDataTable.iGiveTakeLayeringOffsetPosition := sRunData.TDataLoader.iLayringOffsetPos;
+					sRunData.eCmdTable := RCT_TakePart;
+					eManagerStep := SP_RunStp46;
+				END_IF
+			SP_RunStp46:
+				IF sRunData.sStatusLoader = RS_WaitRequest AND  sRunData.sStatusTable = RS_WaitRequest  THEN
+					(* Reject part if not correctly dropped *)
+					IF sRunData.TDataLoader.aTPartData[LH_Head2].bPartPresent THEN
+						eManagerStep := SP_RunStp47;
+					ELSE
+						eManagerStep := SP_RunStp41;
+					END_IF
+				END_IF
+			SP_RunStp47:
+				sRunData.TDataLoader.eModule := LMP_Reject;
+				sRunData.eCmdLoader := RCLo_PrepareDropPart;
+				eManagerStep := SP_RunStp48;
+			SP_RunStp48:
+				IF sRunData.sStatusLoader = RS_WaitRequest THEN
+					sRunData.eCmdLoader := RCLo_GivePart;
+					eManagerStep := SP_RunStp49;
+				END_IF
+			SP_RunStp49:
+				IF sRunData.sStatusLoader = RS_WaitRequest THEN
+					eManagerStep := SP_RunStp42;
+				END_IF
+			SP_RunStp50: (* Launch loader to safe *)
+				eRestartStep := SP_RunStp50;
+				eRestartLoaderStep := SP_RunStp50;
+				sRunData.eCmdLoader := RCLo_MoveToSafe;
+				eManagerStep := SP_RunStp51;
+			SP_RunStp51:
+				IF sRunData.sStatusLoader = RS_WaitRequest AND bPearlingFinishOnTableSide THEN
+					(* Pearling finish *)
+					bReadyForPearling := FALSE;
+					eManagerStep := SP_RunStp52;
+				END_IF
+			SP_RunStp52:
+				eRestartStep := SP_RunStp54;
+				eRestartLoaderStep := SP_RunStp53;
+				IF bDisableCleanAfterPearling  THEN
+					sRunData.eCmdTable := RCT_Turn;
+				ELSE
+					sRunData.eCmdTable := RCT_TurnAndClean;
+				END_IF
+				eWorkingTableSide := ePearlingTableSide;
+				eManagerStep := SP_RunStp53;
+			SP_RunStp53: (*Turning Table *)
+				IF sRunData.sStatusTable = RS_ProcessRequest2 THEN
+					bReadyForPearling := TRUE;
+					eManagerStep := SP_RunStp54;
+				END_IF
+			SP_RunStp54: (*Cleaning Table *)
+				IF sRunData.sStatusTable = RS_WaitRequest  AND  sRunData.sStatusLoader = RS_WaitRequest  THEN
+					bTableIsClean := TRUE;
+					eManagerStep := SP_RunStp1;
+				END_IF
+			SP_RunStp100: (*End of recipe *)
+				bReadyForPearling := FALSE;
+				sRunData.eCmdLoader := RCLo_EndOfRecipe;
+				eManagerStep := SP_RunStp101;
+			SP_RunStp101: (*Loader in safe and lift in unload position *)
+				IF sRunData.sStatusLoader = RS_WaitRequest  AND sRunData.sStatusPearling = RS_WaitRequest AND sRunData.sStatusTable = RS_WaitRequest THEN
+					eManagerStep := SP_RunStp0;
+				END_IF
+	
+			SP_RunStp200: (* During cleaning, load part on head 2*)
+				eRestartStep := SP_RunStp200;
+				eRestartLoaderStep := SP_RunStp200;
+				IF iPartOnProcess = 0 AND NOT bNeedNewPart THEN
+					eManagerStep := SP_RunStp100;
+				ELSE
+					eManagerStep := SP_RunStp240;
+				END_IF
+			SP_RunStp240: (* Load part on head 2 to save time*)
+				eRestartStep := SP_RunStp240;
+				eRestartLoaderStep := SP_RunStp244;
+				eManagerStep := SP_RunStp241;
+			SP_RunStp241:
+				sRunData.TDataLoader.eModule := LMP_Lift1;
+				sRunData.TDataLoader.eTaker := LH_Head2;
+				sRunData.eCmdLoader := RCLo_PrepareTakePart;
+				eManagerStep := SP_RunStp242;
+			SP_RunStp242:
+				IF sRunData.sStatusLoader = RS_WaitRequest THEN
+					sRunData.eCmdLoader := RCLo_TakePart;
+					eManagerStep := SP_RunStp244;
+				END_IF
+			SP_RunStp244:
+				IF sRunData.sStatusLoader = RS_WaitRequest THEN
+					(* Check if table has finished or not *)
+					IF sRunData.sStatusTable = RS_WaitRequest THEN
+						eManagerStep := SP_RunStp1;
+					ELSIF bUse103171OptimB5PreMoveXY THEN
+						(* Move to safe to save time *)
+						eManagerStep := SP_RunStp245;
+					END_IF
+				END_IF
+			SP_RunStp245:
+				eRestartStep := SP_RunStp245;
+				eRestartLoaderStep := SP_RunStp245;
+				sRunData.eCmdLoader := RCLo_MoveToSafe;
+				eManagerStep := SP_RunStp246;
+			SP_RunStp246:
+				IF sRunData.sStatusLoader = RS_WaitRequest AND sRunData.sStatusTable = RS_WaitRequest THEN
+					eManagerStep := SP_RunStp1;
+				END_IF
+		END_CASE
+	END_IF
+	IF bLayeringWithTwoParts THEN
+		IF bSimPearling AND  bReadyForPearling THEN
+			IF sRunData.TDataTable.aTPartData[0,0,ePearlingTableSide].bPartPresent THEN
+				sRunData.TDataTable.aTPartData[0,0,ePearlingTableSide].abPearlingDone[0,PS_SUS] := TRUE;
+			END_IF
+			IF sRunData.TDataTable.aTPartData[0,1,ePearlingTableSide].bPartPresent THEN
+				sRunData.TDataTable.aTPartData[0,1,ePearlingTableSide].abPearlingDone[0,PS_SUS] := TRUE;
+			END_IF
+			IF sRunData.TDataTable.aTPartData[1,0,ePearlingTableSide].bPartPresent THEN
+				sRunData.TDataTable.aTPartData[1,0,ePearlingTableSide].abPearlingDone[0,PS_SUS] := TRUE;
+			END_IF
+			IF sRunData.TDataTable.aTPartData[1,1,ePearlingTableSide].bPartPresent THEN
+				sRunData.TDataTable.aTPartData[1,1,ePearlingTableSide].abPearlingDone[0,PS_SUS] := TRUE;
+			END_IF
+		ELSIF  NOT bSimPearling AND sRunData.sStatusPearling = RS_WaitRequest  AND  bReadyForPearling THEN
+			IF sConfigFileData.bParallelProduction THEN
+				(* Pearling does nothing, launch pearling if there is part to pearl *)
+				sRunData.TDataPearling.abUseSpindle[PH_Left] := FALSE;
+				sRunData.TDataPearling.abUseSpindle[PH_Right] := FALSE;
+				sRunData.TDataPearling.bForceSharpenAfterPearling := FALSE;
+				FOR iLayeringOffsetPos := 0 TO iMaxLayeringOffsetPos DO
+					sRunData.TDataPearling.sPearlingData := sConfigFileData.asPearlingData[PS_SUS].THead[PH_Left]; (* Always same recipe when parrelle prod *)
+					IF sRunData.TDataTable.aTPartData[0,iLayeringOffsetPos,ePearlingTableSide].bPartPresent AND
+						sRunData.TDataPearling.abUseSpindle[PH_Left] = FALSE AND sRunData.TDataPearling.abUseSpindle[PH_Right] = FALSE AND
+						NOT (sRunData.TDataTable.aTPartData[0,iLayeringOffsetPos,ePearlingTableSide].abPearlingDone[0,PS_SUS] OR sRunData.TDataTable.aTPartData[0,iLayeringOffsetPos,ePearlingTableSide].abPearlingDone[1,PS_SUS]) THEN
+						sRunData.TDataPearling.abUseSpindle[PH_Left] := TRUE;
+						sRunData.TDataPearling.iLayringPos := 0;
+						sRunData.TDataPearling.iLayringOffsetPos := iLayeringOffsetPos;
+						sRunData.TDataPearling.apsPartData[PH_Left] := ADR(sRunData.TDataTable.aTPartData[0,iLayeringOffsetPos,ePearlingTableSide]);
+						IF sRunData.TDataTable.aTPartData[1,iLayeringOffsetPos,ePearlingTableSide].bPartPresent AND
+							NOT (sRunData.TDataTable.aTPartData[1,iLayeringOffsetPos,ePearlingTableSide].abPearlingDone[0,PS_SUS] OR sRunData.TDataTable.aTPartData[1,iLayeringOffsetPos,ePearlingTableSide].abPearlingDone[1,PS_SUS]) THEN
+								sRunData.TDataPearling.abUseSpindle[PH_Right] := TRUE;
+								sRunData.TDataPearling.apsPartData[PH_Right] := ADR(sRunData.TDataTable.aTPartData[1,iLayeringOffsetPos,ePearlingTableSide]);
+						END_IF
+					END_IF
+					IF sRunData.TDataTable.aTPartData[1,iLayeringOffsetPos,ePearlingTableSide].bPartPresent AND
+						sRunData.TDataPearling.abUseSpindle[PH_Left] = FALSE AND sRunData.TDataPearling.abUseSpindle[PH_Right] = FALSE AND
+						NOT (sRunData.TDataTable.aTPartData[1,iLayeringOffsetPos,ePearlingTableSide].abPearlingDone[0,PS_SUS] OR sRunData.TDataTable.aTPartData[1,iLayeringOffsetPos,ePearlingTableSide].abPearlingDone[1,PS_SUS]) THEN
+							sRunData.TDataPearling.abUseSpindle[PH_Right] := TRUE;
+							sRunData.TDataPearling.iLayringPos := 1;
+							sRunData.TDataPearling.iLayringOffsetPos := iLayeringOffsetPos;
+							sRunData.TDataPearling.apsPartData[PH_Right] := ADR(sRunData.TDataTable.aTPartData[1,iLayeringOffsetPos,ePearlingTableSide]);
+					END_IF
+				END_FOR
+				IF sRunData.TDataPearling.abUseSpindle[PH_Left] OR sRunData.TDataPearling.abUseSpindle[PH_Right] THEN
+					sRunData.eCmdPearling := RCP_Pearl;
+				END_IF
+			ELSE
+				sRunData.TDataPearling.abUseSpindle[PH_Left] := FALSE;
+				sRunData.TDataPearling.abUseSpindle[PH_Right] := FALSE;
+				sRunData.TDataPearling.bForceSharpenAfterPearling := FALSE;
+				FOR iLayeringPos := 0 TO 1 DO
+					FOR iLayeringOffsetPos := 0 TO iMaxLayeringOffsetPos DO
+						sRunData.TDataPearling.sPearlingData := sConfigFileData.asPearlingData[PS_SUS].THead[PH_Left]; (* Always same recipe when parrelle prod *)
+						IF sRunData.TDataTable.aTPartData[iLayeringPos,iLayeringOffsetPos,ePearlingTableSide].bPartPresent AND
+							sRunData.TDataPearling.abUseSpindle[PH_Left] = FALSE AND sRunData.TDataPearling.abUseSpindle[PH_Right] = FALSE AND
+							NOT (sRunData.TDataTable.aTPartData[iLayeringPos,iLayeringOffsetPos,ePearlingTableSide].abPearlingDone[0,PS_SUS] OR sRunData.TDataTable.aTPartData[iLayeringPos,iLayeringOffsetPos,ePearlingTableSide].abPearlingDone[1,PS_SUS]) THEN
+							sRunData.TDataPearling.abUseSpindle[PH_Left] := TRUE;
+							sRunData.TDataPearling.iLayringPos := iLayeringPos;
+							sRunData.TDataPearling.iLayringOffsetPos := iLayeringOffsetPos;
+							sRunData.TDataPearling.apsPartData[PH_Left] := ADR(sRunData.TDataTable.aTPartData[iLayeringPos,iLayeringOffsetPos,ePearlingTableSide]);
+						END_IF
+					END_FOR
+				END_FOR
+				IF sRunData.TDataPearling.abUseSpindle[PH_Left] OR sRunData.TDataPearling.abUseSpindle[PH_Right] THEN
+					sRunData.eCmdPearling := RCP_Pearl;
+				END_IF
+			END_IF
+		END_IF
+	ELSE
+		IF bSimPearling AND  bReadyForPearling THEN
+			IF sRunData.TDataTable.aTPartData[0,0,ePearlingTableSide].bPartPresent THEN
+				sRunData.TDataTable.aTPartData[0,0,ePearlingTableSide].abPearlingDone[0,PS_SUS] := TRUE;
+			END_IF
+			IF sRunData.TDataTable.aTPartData[1,0,ePearlingTableSide].bPartPresent THEN
+				sRunData.TDataTable.aTPartData[1,0,ePearlingTableSide].abPearlingDone[0,PS_SUS] := TRUE;
+			END_IF
+		ELSIF  NOT bSimPearling AND sRunData.sStatusPearling = RS_WaitRequest  AND  bReadyForPearling THEN
+			IF sConfigFileData.bParallelProduction THEN
+				(* Pearling does nothing, launch pearling if there is part to pearl *)
+				sRunData.TDataPearling.abUseSpindle[PH_Left] := FALSE;
+				sRunData.TDataPearling.abUseSpindle[PH_Right] := FALSE;
+				sRunData.TDataPearling.bForceSharpenAfterPearling := FALSE;
+				FOR iLayeringOffsetPos := 0 TO iMaxLayeringOffsetPos DO
+					sRunData.TDataPearling.sPearlingData := sConfigFileData.asPearlingData[PS_SUS].THead[PH_Left]; (* Always same recipe when parrelle prod *)
+					IF sRunData.TDataTable.aTPartData[0,iLayeringOffsetPos,ePearlingTableSide].bPartPresent AND
+						sRunData.TDataPearling.abUseSpindle[PH_Left] = FALSE AND sRunData.TDataPearling.abUseSpindle[PH_Right] = FALSE AND
+						NOT (sRunData.TDataTable.aTPartData[0,iLayeringOffsetPos,ePearlingTableSide].abPearlingDone[0,PS_SUS] OR sRunData.TDataTable.aTPartData[0,iLayeringOffsetPos,ePearlingTableSide].abPearlingDone[1,PS_SUS]) THEN
+						sRunData.TDataPearling.abUseSpindle[PH_Left] := TRUE;
+						sRunData.TDataPearling.iLayringPos := 0;
+						sRunData.TDataPearling.iLayringOffsetPos := iLayeringOffsetPos;
+						sRunData.TDataPearling.apsPartData[PH_Left] := ADR(sRunData.TDataTable.aTPartData[0,iLayeringOffsetPos,ePearlingTableSide]);
+						IF sRunData.TDataTable.aTPartData[1,iLayeringOffsetPos,ePearlingTableSide].bPartPresent AND
+							NOT (sRunData.TDataTable.aTPartData[1,iLayeringOffsetPos,ePearlingTableSide].abPearlingDone[0,PS_SUS] OR sRunData.TDataTable.aTPartData[1,iLayeringOffsetPos,ePearlingTableSide].abPearlingDone[1,PS_SUS]) THEN
+								sRunData.TDataPearling.abUseSpindle[PH_Right] := TRUE;
+								sRunData.TDataPearling.apsPartData[PH_Right] := ADR(sRunData.TDataTable.aTPartData[1,iLayeringOffsetPos,ePearlingTableSide]);
+						END_IF
+					END_IF
+					IF sRunData.TDataTable.aTPartData[1,iLayeringOffsetPos,ePearlingTableSide].bPartPresent AND
+						sRunData.TDataPearling.abUseSpindle[PH_Left] = FALSE AND sRunData.TDataPearling.abUseSpindle[PH_Right] = FALSE AND
+						NOT (sRunData.TDataTable.aTPartData[1,iLayeringOffsetPos,ePearlingTableSide].abPearlingDone[0,PS_SUS] OR sRunData.TDataTable.aTPartData[1,iLayeringOffsetPos,ePearlingTableSide].abPearlingDone[1,PS_SUS]) THEN
+							sRunData.TDataPearling.abUseSpindle[PH_Right] := TRUE;
+							sRunData.TDataPearling.iLayringPos := 1;
+							sRunData.TDataPearling.iLayringOffsetPos := iLayeringOffsetPos;
+							sRunData.TDataPearling.apsPartData[PH_Right] := ADR(sRunData.TDataTable.aTPartData[1,iLayeringOffsetPos,ePearlingTableSide]);
+					END_IF
+				END_FOR
+				IF sRunData.TDataPearling.abUseSpindle[PH_Left] OR sRunData.TDataPearling.abUseSpindle[PH_Right] THEN
+					sRunData.eCmdPearling := RCP_Pearl;
+				END_IF
+			ELSE
+				sRunData.TDataPearling.abUseSpindle[PH_Left] := FALSE;
+				sRunData.TDataPearling.abUseSpindle[PH_Right] := FALSE;
+				sRunData.TDataPearling.bForceSharpenAfterPearling := FALSE;
+				FOR iLayeringPos := 0 TO 1 DO
+					FOR iLayeringOffsetPos := 0 TO iMaxLayeringOffsetPos DO
+						sRunData.TDataPearling.sPearlingData := sConfigFileData.asPearlingData[PS_SUS].THead[PH_Left]; (* Always same recipe when parrelle prod *)
+						IF sRunData.TDataTable.aTPartData[iLayeringPos,iLayeringOffsetPos,ePearlingTableSide].bPartPresent AND
+							sRunData.TDataPearling.abUseSpindle[PH_Left] = FALSE AND sRunData.TDataPearling.abUseSpindle[PH_Right] = FALSE AND
+							NOT (sRunData.TDataTable.aTPartData[iLayeringPos,iLayeringOffsetPos,ePearlingTableSide].abPearlingDone[0,PS_SUS] OR sRunData.TDataTable.aTPartData[iLayeringPos,iLayeringOffsetPos,ePearlingTableSide].abPearlingDone[1,PS_SUS]) THEN
+							sRunData.TDataPearling.abUseSpindle[PH_Left] := TRUE;
+							sRunData.TDataPearling.iLayringPos := iLayeringPos;
+							sRunData.TDataPearling.iLayringOffsetPos := iLayeringOffsetPos;
+							sRunData.TDataPearling.apsPartData[PH_Left] := ADR(sRunData.TDataTable.aTPartData[iLayeringPos,iLayeringOffsetPos,ePearlingTableSide]);
+						END_IF
+					END_FOR
+				END_FOR
+				IF sRunData.TDataPearling.abUseSpindle[PH_Left] OR sRunData.TDataPearling.abUseSpindle[PH_Right] THEN
+					sRunData.eCmdPearling := RCP_Pearl;
+				END_IF
+			END_IF
+		END_IF
+	END_IF
+END_IF
+
+iStep := eManagerStep;
+bRecipeIsFinish := eManagerStep = SP_RunStp0;
+
+
+(* Check config errors *)
+bConfigError := (NOT bUseTurnOver AND bPearlsOnSideSous) OR (sConfigFileData.bParallelProduction AND bPearlsOnSideSous);]]></ST>
+    </Implementation>
+    <LineIds Name="ManagerRun">
+      <LineId Id="1917" Count="64" />
+      <LineId Id="4795" Count="13" />
+      <LineId Id="4822" Count="0" />
+      <LineId Id="1997" Count="141" />
+      <LineId Id="4352" Count="0" />
+      <LineId Id="4347" Count="0" />
+      <LineId Id="4722" Count="0" />
+      <LineId Id="4375" Count="1" />
+      <LineId Id="4379" Count="22" />
+      <LineId Id="4403" Count="159" />
+      <LineId Id="4564" Count="94" />
+      <LineId Id="4721" Count="0" />
+      <LineId Id="4348" Count="1" />
+      <LineId Id="2140" Count="809" />
+      <LineId Id="4272" Count="3" />
+      <LineId Id="2962" Count="3" />
+      <LineId Id="4277" Count="1" />
+      <LineId Id="2972" Count="40" />
+      <LineId Id="3917" Count="0" />
+      <LineId Id="3013" Count="63" />
+      <LineId Id="3984" Count="0" />
+      <LineId Id="3077" Count="13" />
+      <LineId Id="3986" Count="0" />
+      <LineId Id="4792" Count="0" />
+      <LineId Id="3989" Count="0" />
+      <LineId Id="4794" Count="0" />
+      <LineId Id="4791" Count="0" />
+      <LineId Id="4127" Count="0" />
+      <LineId Id="3988" Count="0" />
+      <LineId Id="3091" Count="7" />
+      <LineId Id="3756" Count="0" />
+      <LineId Id="3759" Count="0" />
+      <LineId Id="3099" Count="1" />
+      <LineId Id="3760" Count="0" />
+      <LineId Id="4198" Count="0" />
+      <LineId Id="3804" Count="1" />
+      <LineId Id="3788" Count="0" />
+      <LineId Id="4070" Count="0" />
+      <LineId Id="4080" Count="1" />
+      <LineId Id="4095" Count="0" />
+      <LineId Id="4101" Count="0" />
+      <LineId Id="4073" Count="0" />
+      <LineId Id="4076" Count="1" />
+      <LineId Id="4093" Count="1" />
+      <LineId Id="4100" Count="0" />
+      <LineId Id="4072" Count="0" />
+      <LineId Id="3793" Count="0" />
+      <LineId Id="4086" Count="0" />
+      <LineId Id="4089" Count="1" />
+      <LineId Id="4096" Count="0" />
+      <LineId Id="4114" Count="0" />
+      <LineId Id="4102" Count="0" />
+      <LineId Id="3794" Count="0" />
+      <LineId Id="4087" Count="0" />
+      <LineId Id="3795" Count="0" />
+      <LineId Id="4091" Count="1" />
+      <LineId Id="4119" Count="0" />
+      <LineId Id="3803" Count="0" />
+      <LineId Id="3797" Count="1" />
+      <LineId Id="3800" Count="1" />
+      <LineId Id="4113" Count="0" />
+      <LineId Id="4199" Count="0" />
+      <LineId Id="3772" Count="1" />
+      <LineId Id="3915" Count="0" />
+      <LineId Id="3774" Count="0" />
+      <LineId Id="3777" Count="2" />
+      <LineId Id="3841" Count="1" />
+      <LineId Id="3844" Count="1" />
+      <LineId Id="3780" Count="1" />
+      <LineId Id="3839" Count="0" />
+      <LineId Id="3786" Count="0" />
+      <LineId Id="3762" Count="0" />
+      <LineId Id="3840" Count="0" />
+      <LineId Id="3812" Count="7" />
+      <LineId Id="3821" Count="0" />
+      <LineId Id="3825" Count="3" />
+      <LineId Id="3990" Count="0" />
+      <LineId Id="3994" Count="0" />
+      <LineId Id="3991" Count="0" />
+      <LineId Id="3829" Count="0" />
+      <LineId Id="3993" Count="0" />
+      <LineId Id="3992" Count="0" />
+      <LineId Id="3831" Count="5" />
+      <LineId Id="3102" Count="0" />
+      <LineId Id="4892" Count="0" />
+      <LineId Id="3103" Count="4" />
+      <LineId Id="4893" Count="0" />
+      <LineId Id="4901" Count="0" />
+      <LineId Id="4899" Count="0" />
+      <LineId Id="3108" Count="12" />
+      <LineId Id="4103" Count="0" />
+      <LineId Id="4105" Count="0" />
+      <LineId Id="4107" Count="0" />
+      <LineId Id="4098" Count="0" />
+      <LineId Id="4108" Count="3" />
+      <LineId Id="4125" Count="0" />
+      <LineId Id="4128" Count="2" />
+      <LineId Id="4126" Count="0" />
+      <LineId Id="3121" Count="29" />
+      <LineId Id="3848" Count="0" />
+      <LineId Id="3151" Count="1" />
+      <LineId Id="3995" Count="7" />
+      <LineId Id="3153" Count="536" />
+      <LineId Id="1687" Count="0" />
+    </LineIds>
+  </POU>
+</TcPlcObject>

@@ -1,0 +1,21 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<TcPlcObject Version="1.1.0.1" ProductVersion="3.1.4022.12">
+  <DUT Name="TRunCmdLoader" Id="{244ce1b2-c675-4ff0-8116-8eadfbb43d07}">
+    <Declaration><![CDATA[TYPE TRunCmdLoader :
+	(
+		RCLo_None,
+		RCLo_TakePart,
+		RCLo_GivePart,
+		RCLo_TakePlate,
+		RCLo_GivePlate,
+		RCLo_Cleaning,
+		RCLo_PrepareTakePart,
+		RCLo_PrepareDropPart,
+		RCLo_MoveToSafe,
+		RCLo_SwitchPlate,
+		RCLo_EndOfRecipe,
+		RCLo_ScanPlate
+	);
+END_TYPE]]></Declaration>
+  </DUT>
+</TcPlcObject>

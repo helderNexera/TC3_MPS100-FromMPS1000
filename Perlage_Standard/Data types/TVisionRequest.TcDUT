@@ -1,0 +1,12 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<TcPlcObject Version="1.1.0.1" ProductVersion="3.1.4022.12">
+  <DUT Name="TVisionRequest" Id="{db723e7c-d8f6-4a50-b6fd-3909c1c74a14}">
+    <Declaration><![CDATA[TYPE TVisionRequest :
+	(	VR_None := 0,
+		VR_Init,
+		VR_Analyse,
+		VR_GrabImage
+	);
+END_TYPE]]></Declaration>
+  </DUT>
+</TcPlcObject>

@@ -1,0 +1,836 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<TcPlcObject Version="1.1.0.1" ProductVersion="3.1.4022.12">
+  <POU Name="LiftHdl" Id="{c188ffcb-0cbf-4754-9984-68c26d3646d3}" SpecialFunc="None">
+    <Declaration><![CDATA[FUNCTION_BLOCK LiftHdl
+
+(*
+	Description 	: Bloc fonction de gestion du Lift
+	Auteur		: DRE
+	Date		: 02.09.2016
+	Version		: 1.00
+
+	Modifications :
+
+*)
+
+VAR_INPUT
+	bEnable						: BOOL;
+	bHomeSensor					: BOOL;
+	bLimitPos					: BOOL;
+	bLimitNeg					: BOOL;
+	bDrawerInPos				: BOOL;
+	bPlateInPos					: BOOL;
+	bPowerOn					: BOOL;
+	bResetErrors				: BOOL;
+	bStopReq					: BOOL;
+	bPauseReq					: BOOL;
+	eCommand					: TModuleCommands;
+	eLiftType					: TLiftType;
+	lrPlateHeight				: LREAL;
+	lrPlateEdge					: LREAL;
+	lrPlateZOffsetForLift		: LREAL;
+	eRunCommand					: TRunCmdLift;
+	bNewJob						: BOOL;
+	bWaitingForPlates			: BOOL;
+	bManInterlock				: BOOL;
+	bDrawerLocked				: BOOL;
+	bDrawerUnlocked				: BOOL;
+	bPlateLocked				: BOOL;
+	bPlateUnlocked				: BOOL;
+END_VAR
+VAR_OUTPUT
+	bModuleError				: BOOL;
+	bLiftAxisError				: BOOL;
+	bLiftEmpty					: BOOL;
+	bLiftBlueLight				: BOOL;
+	bDrawerIsOpen				: BOOL;
+	eRunStatus					: TRunStatus;
+	sRunData					: TRunDataLift;
+	bNewPlate					: BOOL;
+	bLockPlate					: BOOL;
+	bUnlockPlate				: BOOL;
+	bLockDrawer					: BOOL;
+	bUnlockDrawer				: BOOL;
+	bLockPlateError				: BOOL;
+	bLockDrawerError			: BOOL;
+END_VAR
+VAR_IN_OUT
+	sCurrentState				: TModuleData;
+	TManualCmd					: TManLift;
+	sLiftAxisRef				: AXIS_REF;
+END_VAR
+VAR PERSISTENT
+	lrLiftEmptyPos				: LREAL					:= 250;		(* Position when Lift is empty *)
+	lrLiftFullPos				: LREAL					:= 0;			(* Position when Lift is full *)
+	lrLiftLoadPos				: LREAL					:= 10;		(* Position when Drawer can be open *)
+	lrLiftJogStep				: LREAL					:= 3;
+	lrLiftZOffset				: LREAL					:= 0;
+END_VAR
+VAR
+	eMoveLiftAxisCommand		: TAxisCommands	:= AC_None;
+	lrLiftTargetPos				: LREAL;
+	lrCurrentLiftMoveSpeed		: LREAL;
+	TLiftAxis					: StdAxis;
+	bMoveToLoadPlate			: BOOL;
+	TCloseTimer					: TON;
+	lrLiftPlatePos				: LREAL;
+	bLastPowerOn				: BOOL;
+	bLastDrawerIsOpen			: BOOL;
+	TPlateLocker				: FB_CheckJack1_2;
+	TDrawerLocker				: FB_CheckJack1_2;
+	bSim4Testing				: BOOL := FALSE;
+	bManLockPlate				: BOOL := FALSE;
+END_VAR]]></Declaration>
+    <Implementation>
+      <ST><![CDATA[IF bSim4Testing THEN
+	bManInterlock := FALSE;
+END_IF
+
+IF (NOT sCurrentState.bStepMode) THEN
+	sCurrentState.bWaitStep := FALSE;
+END_IF
+
+CASE eCommand OF
+	MC_NoCmd :
+		CASE sCurrentState.eStatus OF
+			MS_Init :
+				IF bEnable THEN
+				CASE sCurrentState.eStep OF
+					SP_InitStp1 :
+						bLockDrawer := TRUE;
+						bLockPlate := FALSE;
+						sCurrentState.eStep := SP_InitStp2;
+					SP_InitStp2 :
+						IF bDrawerLocked AND bPlateUnlocked THEN
+							sCurrentState.eStep := SP_InitStp10;
+						END_IF
+					SP_InitStp10 :
+						(* Init axis*)
+						eMoveLiftAxisCommand := AC_Init;
+						sCurrentState.eStep := SP_InitStp12;
+					SP_InitStp12 : (* Wait init axis is done*)
+						IF TLiftAxis.eCurrentState = AS_InPosition THEN
+							IF TLiftAxis.lrCurrentPos > lrLiftFullPos THEN
+								sCurrentState.eStep := SP_InitStp13;
+							ELSE
+								sCurrentState.eStep := SP_InitStp20;
+							END_IF
+						END_IF
+					SP_InitStp13: (* we need to go out of the sensor *)
+						lrCurrentLiftMoveSpeed := TLiftAxis.lrRunningSpeed;
+						//lrLiftTargetPos := TLiftAxis.lrCurrentPos - ( lrLiftZOffset + lrPlateZOffsetForLift + 1);
+						lrLiftTargetPos := TLiftAxis.lrCurrentPos - lrPlateZOffsetForLift + lrLiftZOffset;
+						IF lrLiftTargetPos < lrLiftFullPos THEN
+							lrLiftTargetPos := lrLiftFullPos;
+						END_IF
+						sCurrentState.eStep := SP_InitStp14;
+						eMoveLiftAxisCommand := AC_MoveAtAbsPos;
+					SP_InitStp14 : (* Wait out of the plate*)
+						IF TLiftAxis.eCurrentState = AS_InPosition THEN
+								sCurrentState.eStep := SP_InitStp20;
+						END_IF
+					SP_InitStp20 :  (* Move to plate*)
+						IF  NOT bPlateInPos THEN
+							lrLiftTargetPos := lrLiftEmptyPos; (*Go up*)
+							sCurrentState.eStep := SP_InitStp21;
+						ELSE
+							lrLiftTargetPos := lrLiftFullPos; (*Go down*)
+							sCurrentState.eStep := SP_InitStp22;
+						END_IF
+						lrCurrentLiftMoveSpeed := TLiftAxis.stAxisParameters.fRefVeloSearch;
+						eMoveLiftAxisCommand := AC_MoveAtAbsPos;
+					SP_InitStp21 :  (*moving up, search plate*)
+						IF TLiftAxis.eCurrentState = AS_InPosition THEN
+							(* Lift is full *)
+							sRunData.eLiftPos := LP_Empty;
+							sCurrentState.eStep := SP_InitStp99;
+						ELSE
+							IF  bPlateInPos THEN
+								lrLiftTargetPos := lrLiftFullPos; (*Go down*)
+								sCurrentState.eStep := SP_InitStp22;
+								eMoveLiftAxisCommand := AC_MoveAtAbsPos;
+							END_IF
+						END_IF
+					SP_InitStp22 :(* Moving down, out of sensor*)
+						IF TLiftAxis.eCurrentState = AS_InPosition THEN
+							 (* Lift is empty *)
+							sRunData.eLiftPos := LP_Full;
+							sCurrentState.eStep := SP_InitStp99;
+						ELSE
+							IF  NOT bPlateInPos THEN
+								lrCurrentLiftMoveSpeed := TLiftAxis.stAxisParameters.fRefVeloSync;   (* set slow speed*)
+								lrLiftTargetPos := lrLiftEmptyPos; (*Go up*)
+								sCurrentState.eStep := SP_InitStp23;
+								eMoveLiftAxisCommand := AC_MoveAtAbsPos;
+							END_IF
+						END_IF
+					SP_InitStp23 :  (*moving up slowly, search plate*)
+						IF TLiftAxis.eCurrentState = AS_InPosition THEN
+							(* Lift is full *)
+							sRunData.eLiftPos := LP_Empty;
+							sCurrentState.eStep := SP_InitStp99;
+						ELSE
+							IF  bPlateInPos THEN
+								lrCurrentLiftMoveSpeed := TLiftAxis.lrRunningSpeed;
+								lrLiftPlatePos := TLiftAxis.lrCurrentPos;
+								lrLiftTargetPos := lrLiftPlatePos + lrLiftZOffset + lrPlateEdge + lrPlateZOffsetForLift;
+								sCurrentState.eStep := SP_InitStp24;
+								eMoveLiftAxisCommand := AC_MoveAtAbsPos;
+							END_IF
+						END_IF
+					SP_InitStp24 :(* Wait until position is reached *)
+						IF TLiftAxis.eCurrentState = AS_InPosition THEN
+							sRunData.eLiftPos := LP_OnPlate;
+							IF  bUseLockPlate THEN
+								bLockPlate := TRUE;
+								sCurrentState.eStep := SP_InitStp25;
+							ELSE
+								sCurrentState.eStep := SP_InitStp99;
+							END_IF
+						END_IF
+					SP_InitStp25 :
+						IF bPlateLocked THEN
+							sCurrentState.eStep := SP_InitStp99;
+						END_IF
+					SP_InitStp99 : (* Leave Init *)
+						lrCurrentLiftMoveSpeed := TLiftAxis.lrRunningSpeed;
+						sCurrentState.eStep := SP_RunStp1;
+						sCurrentState.eStatus := MS_Ready;
+						sCurrentState.bInitDone := TRUE;
+						bMoveToLoadPlate := FALSE;
+						bLiftBlueLight := FALSE;
+				END_CASE
+				ELSE
+					sCurrentState.eStatus := MS_Ready;
+					sCurrentState.bInitDone := TRUE;
+				END_IF
+			MS_Running :
+				IF bEnable AND  (NOT sCurrentState.bWaitStep) THEN
+					CASE sCurrentState.eStep OF
+						SP_RunStp1:
+							IF bMoveToLoadPlate THEN
+								sCurrentState.eStep := SP_RunStp20;
+							ELSE
+								eRunStatus := RS_WaitRequest;
+								CASE eRunCommand OF
+									RCL_None:
+										IF bStopReq  THEN
+											sCurrentState.eStatus := MS_Ready;
+										ELSIF bPauseReq THEN
+											sCurrentState.eStatus := MS_Paused;
+										END_IF
+									RCL_MoveToPlate:
+										sRunData.eLiftPos := LP_Moving;
+										bLockDrawer := TRUE;
+										bLockPlate := FALSE;
+										sCurrentState.eStep := SP_RunStp50;
+									RCL_MoveToLoadPlate:
+										bLockDrawer := TRUE;
+										bLockPlate := FALSE;
+										sCurrentState.eStep := SP_RunStp20;
+									RCL_MoveToOpenDrawer:
+										bLockDrawer := TRUE;
+										bLockPlate := FALSE;
+										sRunData.eLiftPos := LP_Moving;
+										sCurrentState.eStep := SP_RunStp30;
+								END_CASE
+								IF sCurrentState.eStep<> SP_RunStp1 THEN eRunStatus := RS_ProcessRequest1; END_IF
+							END_IF
+						SP_RunStp20 :  (* Move to load plate*)
+							IF bDrawerLocked AND bPlateUnlocked THEN
+								bMoveToLoadPlate := FALSE;
+								CASE sRunData.eLiftPos OF
+									LP_OnPlate:
+										IF eLiftType = LT_LOADER THEN
+											lrLiftTargetPos := lrLiftPlatePos  + lrLiftZOffset + lrPlateEdge;
+										ELSE
+											lrLiftTargetPos := lrLiftPlatePos  + lrLiftZOffset + lrPlateEdge - lrPlateHeight ;
+										END_IF
+										lrCurrentLiftMoveSpeed := TLiftAxis.lrRunningSpeed;
+										IF lrLiftTargetPos > TLiftAxis.lrMaxPos THEN
+											lrLiftTargetPos := TLiftAxis.lrMaxPos;
+										END_IF
+										IF lrLiftTargetPos <= lrLiftFullPos THEN
+											sRunData.eLiftPos := LP_Full;
+											sCurrentState.eStep := SP_RunStp1;
+										ELSE
+											sRunData.eLiftPos := LP_Moving;
+											eMoveLiftAxisCommand := AC_MoveAtAbsPos;
+											sCurrentState.eStep := SP_RunStp21;
+										END_IF
+									LP_OnPlateLoad,LP_Full:
+										sCurrentState.eStep := SP_RunStp1;
+									LP_Moving, LP_OpenDrawer:
+										bMoveToLoadPlate := TRUE;
+										sRunData.eLiftPos := LP_Moving;
+										sCurrentState.eStep := SP_RunStp50; (* first move to plate *)
+									LP_Empty:
+										IF eLiftType = LT_LOADER THEN
+											sCurrentState.eStep := SP_RunStp1;
+										ELSE
+											lrLiftTargetPos := lrLiftEmptyPos  + lrLiftZOffset + lrPlateEdge - lrPlateHeight ;
+											IF lrLiftTargetPos > TLiftAxis.lrMaxPos THEN
+												lrLiftTargetPos := TLiftAxis.lrMaxPos;
+											END_IF
+											lrCurrentLiftMoveSpeed := TLiftAxis.lrRunningSpeed;
+											sRunData.eLiftPos := LP_Moving;
+											eMoveLiftAxisCommand := AC_MoveAtAbsPos;
+											sCurrentState.eStep := SP_RunStp21;
+										END_IF
+								END_CASE
+							END_IF
+						SP_RunStp21 :  (*moving *)
+							IF TLiftAxis.eCurrentState = AS_InPosition THEN
+								sRunData.eLiftPos := LP_OnPlateLoad;
+								sCurrentState.eStep := SP_RunStp1;
+							END_IF
+						SP_RunStp30 :  (* Move to Open Drawer*)
+							IF bDrawerLocked AND bPlateUnlocked THEN
+								lrLiftTargetPos := lrLiftLoadPos;
+								lrCurrentLiftMoveSpeed := TLiftAxis.lrRunningSpeed;
+								eMoveLiftAxisCommand := AC_MoveAtAbsPos;
+								sCurrentState.eStep := SP_RunStp31;
+							END_IF
+						SP_RunStp31 :  (*moving *)
+							IF TLiftAxis.eCurrentState = AS_InPosition THEN
+								sRunData.eLiftPos := LP_OpenDrawer;
+								sCurrentState.eStep := SP_RunStp32;
+								bLiftBlueLight := TRUE;
+								bLockDrawer := FALSE;
+							END_IF
+						SP_RunStp32 :  (* Operator open drawer *)
+							IF bStopReq  THEN
+								sCurrentState.eStatus := MS_Ready;
+								sCurrentState.eStep := SP_RunStp33;
+							ELSIF bPauseReq THEN
+								sCurrentState.eStatus := MS_Paused;
+								sCurrentState.eStep := SP_RunStp33;
+							END_IF
+							IF NOT bDrawerInPos THEN
+								TCloseTimer(IN := FALSE);
+								sCurrentState.eStep := SP_RunStp33;
+							END_IF
+						SP_RunStp33 :  (* Operator close drawer *)
+							IF bStopReq  THEN
+								sCurrentState.eStatus := MS_Ready;
+							ELSIF bPauseReq THEN
+								sCurrentState.eStatus := MS_Paused;
+							END_IF
+							TCloseTimer(IN := bDrawerInPos AND NOT bWaitingForPlates, PT := t#3s);
+							IF TCloseTimer.Q THEN
+								bLockDrawer := TRUE;
+								bLiftBlueLight := FALSE;
+								sCurrentState.eStep := SP_RunStp1;
+							END_IF
+						SP_RunStp50 : (* Wait init axis is done*)
+							IF bDrawerLocked AND bPlateUnlocked THEN
+								IF  sRunData.eLiftPos = LP_OnPlate THEN
+									sCurrentState.eStep := SP_RunStp1;
+								ELSE
+									IF TLiftAxis.eCurrentState = AS_InPosition THEN
+										IF TLiftAxis.lrCurrentPos > lrLiftFullPos THEN
+											sCurrentState.eStep := SP_RunStp51;
+										ELSE
+											sCurrentState.eStep := SP_RunStp53;
+										END_IF
+									END_IF
+								END_IF
+							END_IF
+						SP_RunStp51: (* we need to go out of the sensor *)
+							lrCurrentLiftMoveSpeed := TLiftAxis.lrRunningSpeed;
+							//lrLiftTargetPos := TLiftAxis.lrCurrentPos - ( lrLiftZOffset + lrPlateZOffsetForLift + 1);
+							lrLiftTargetPos := TLiftAxis.lrCurrentPos - lrPlateZOffsetForLift + lrLiftZOffset;
+							IF lrLiftTargetPos < lrLiftFullPos THEN
+								lrLiftTargetPos := lrLiftFullPos;
+							END_IF
+							sCurrentState.eStep := SP_RunStp52;
+							eMoveLiftAxisCommand := AC_MoveAtAbsPos;
+						SP_RunStp52 : (* Wait out of the plate*)
+							IF TLiftAxis.eCurrentState = AS_InPosition THEN
+									sCurrentState.eStep := SP_RunStp53;
+							END_IF
+						SP_RunStp53 :  (* Move to plate*)
+							IF  NOT bPlateInPos THEN
+								lrLiftTargetPos := lrLiftEmptyPos; (*Go up*)
+								sCurrentState.eStep := SP_RunStp54;
+							ELSE
+								lrLiftTargetPos := lrLiftFullPos; (*Go down*)
+								sCurrentState.eStep := SP_RunStp55;
+							END_IF
+							lrCurrentLiftMoveSpeed := TLiftAxis.stAxisParameters.fRefVeloSearch;
+							eMoveLiftAxisCommand := AC_MoveAtAbsPos;
+						SP_RunStp54 :  (*moving up, search plate*)
+							IF TLiftAxis.eCurrentState = AS_InPosition THEN
+								(* Lift is full *)
+								sRunData.eLiftPos := LP_Empty;
+								lrCurrentLiftMoveSpeed := TLiftAxis.lrRunningSpeed;
+								sCurrentState.eStep := SP_RunStp1;
+							ELSE
+								IF  bPlateInPos THEN
+									lrLiftTargetPos := lrLiftFullPos; (*Go down*)
+									sCurrentState.eStep := SP_RunStp55;
+									eMoveLiftAxisCommand := AC_MoveAtAbsPos;
+								END_IF
+							END_IF
+						SP_RunStp55 :(* Moving down, out of sensor*)
+							IF TLiftAxis.eCurrentState = AS_InPosition THEN
+								 (* Lift is empty *)
+								sRunData.eLiftPos := LP_Full;
+								lrCurrentLiftMoveSpeed := TLiftAxis.lrRunningSpeed;
+								sCurrentState.eStep := SP_RunStp1;
+							ELSE
+								IF  NOT bPlateInPos THEN
+									lrCurrentLiftMoveSpeed := TLiftAxis.stAxisParameters.fRefVeloSync;   (* set slow speed*)
+									lrLiftTargetPos := lrLiftEmptyPos; (*Go up*)
+									sCurrentState.eStep := SP_RunStp56;
+									eMoveLiftAxisCommand := AC_MoveAtAbsPos;
+								END_IF
+							END_IF
+						SP_RunStp56 :  (*moving up slowly, search plate*)
+							IF TLiftAxis.eCurrentState = AS_InPosition THEN
+								(* Lift is full *)
+								sRunData.eLiftPos := LP_Empty;
+								lrCurrentLiftMoveSpeed := TLiftAxis.lrRunningSpeed;
+								sCurrentState.eStep := SP_RunStp1;
+							ELSE
+								IF  bPlateInPos THEN
+									lrCurrentLiftMoveSpeed := TLiftAxis.lrRunningSpeed;
+									lrLiftPlatePos := TLiftAxis.lrCurrentPos;
+									lrLiftTargetPos := lrLiftPlatePos + lrPlateEdge + lrLiftZOffset + lrPlateZOffsetForLift;
+									sCurrentState.eStep := SP_RunStp57;
+									eMoveLiftAxisCommand := AC_MoveAtAbsPos;
+								END_IF
+							END_IF
+						SP_RunStp57 :(* Wait until position is reached *)
+							IF TLiftAxis.eCurrentState = AS_InPosition THEN
+								(* Lock plate *)
+								IF bUseLockPlate THEN
+									bLockPlate := TRUE;
+								END_IF
+								sCurrentState.bWaitStep := TRUE;
+								sCurrentState.eStep := SP_RunStp58;
+							END_IF
+						SP_RunStp58:
+							IF bPlateLocked OR NOT bLockPlate THEN
+								sRunData.eLiftPos := LP_OnPlate;
+								sCurrentState.eStep := SP_RunStp1;
+							END_IF
+					END_CASE
+				END_IF
+			MS_Manual :
+				TManualCmd.TLiftAxis.Home.Enable := NOT bManInterlock AND bDrawerInPos AND bPlateUnlocked AND ((TLiftAxis.eCurrentState = AS_InPosition) OR (TLiftAxis.eCurrentState = AS_NotHomed));
+				TManualCmd.TLiftAxis.MoveBw.Enable := NOT bManInterlock AND bDrawerInPos AND bPlateUnlocked AND (TLiftAxis.eCurrentState = AS_InPosition)  AND (TLiftAxis.lrCurrentPos-lrLiftJogStep >= TLiftAxis.lrMinPos) ;
+				TManualCmd.TLiftAxis.MoveFw.Enable := NOT bManInterlock AND bDrawerInPos AND bPlateUnlocked AND (TLiftAxis.eCurrentState = AS_InPosition)  AND (TLiftAxis.lrCurrentPos+lrLiftJogStep <= TLiftAxis.lrMaxPos) ;
+				TManualCmd.TLiftAxisFullPos.MoveToTeach.Enable := NOT bManInterlock AND bDrawerInPos AND bPlateUnlocked AND (TLiftAxis.eCurrentState = AS_InPosition)  AND lrLiftFullPos >= TLiftAxis.lrMinPos AND lrLiftFullPos <= TLiftAxis.lrMaxPos;
+				TManualCmd.TLiftAxisEmptyPos.MoveToTeach.Enable := NOT bManInterlock AND bDrawerInPos AND bPlateUnlocked AND (TLiftAxis.eCurrentState = AS_InPosition)  AND lrLiftEmptyPos >= TLiftAxis.lrMinPos AND lrLiftEmptyPos <= TLiftAxis.lrMaxPos;
+				TManualCmd.TLiftAxisLoadPos.MoveToTeach.Enable := NOT bManInterlock AND bDrawerInPos AND bPlateUnlocked AND (TLiftAxis.eCurrentState = AS_InPosition)  AND lrLiftLoadPos >= TLiftAxis.lrMinPos AND lrLiftLoadPos <= TLiftAxis.lrMaxPos;
+				TManualCmd.TLiftAxisZOffset.MoveToTeach.Enable := FALSE;
+				TManualCmd.TLiftAxis.CurrentPos := TLiftAxis.lrCurrentPos;
+				TManualCmd.TMoveToPlate.Enable := NOT bManInterlock AND bDrawerInPos AND bPlateUnlocked AND (TLiftAxis.eCurrentState = AS_InPosition);
+				TManualCmd.TMoveToPlateVision.Enable := NOT bManInterlock AND bDrawerInPos AND bPlateUnlocked AND (TLiftAxis.eCurrentState = AS_InPosition) AND (lrLiftPlatePos<>0);
+				TManualCmd.TLiftAxisFullPos.TeachedPos := lrLiftFullPos;
+				TManualCmd.TLiftAxisEmptyPos.TeachedPos := lrLiftEmptyPos;
+				TManualCmd.TLiftAxisLoadPos.TeachedPos := lrLiftLoadPos;
+				TManualCmd.TLiftAxisZOffset.TeachedPos := lrLiftZOffset;
+				TManualCmd.bDrawerInPos := bDrawerInPos;
+				TManualCmd.bPlateInPos := bPlateInPos;
+				TManualCmd.lrPlatePos := lrLiftPlatePos;
+				TManualCmd.TLockDrawer.Enable := NOT bDrawerUnlocked OR (NOT bManInterlock AND bDrawerInPos AND (TLiftAxis.eCurrentState = AS_InPosition));
+				TManualCmd.TLockPlate.Enable := NOT bPlateUnlocked OR (NOT bManInterlock AND bDrawerInPos AND (TLiftAxis.eCurrentState = AS_InPosition));
+				bLiftBlueLight :=  bDrawerUnlocked AND ((TLiftAxis.bAxisHomed) AND ((TLiftAxis.eCurrentState = AS_InPosition)  OR (TLiftAxis.eCurrentState = AS_PowerOff)) AND (TLiftAxis.lrCurrentPos < lrLiftLoadPos + 0.1));
+				CASE sCurrentState.eStep OF
+					SP_ManualStp0 :
+						TManualCmd.TLiftAxis.JogStep := lrLiftJogStep;
+						TManualCmd.TLiftAxis.MoveFw.Activate := FALSE;
+						TManualCmd.TLiftAxis.MoveBw.Activate := FALSE;
+						TManualCmd.TLiftAxis.Home.Activate := FALSE;
+						TManualCmd.TMoveToPlate.Activate := FALSE;
+
+						TManualCmd.TLiftAxisFullPos.MoveToTeach.Activate := FALSE;
+						TManualCmd.TLiftAxisEmptyPos.MoveToTeach.Activate := FALSE;
+						TManualCmd.TLiftAxisLoadPos.MoveToTeach.Activate := FALSE;
+						TManualCmd.TLiftAxisZOffset.MoveToTeach.Activate := FALSE;
+
+						TManualCmd.TLiftAxisFullPos.Teach := FALSE;
+						TManualCmd.TLiftAxisEmptyPos.Teach := FALSE;
+						TManualCmd.TLiftAxisLoadPos.Teach := FALSE;
+						TManualCmd.TLiftAxisZOffset.Teach := FALSE;
+						lrLiftPlatePos := 0;
+						bManLockPlate := FALSE;
+
+						TManualCmd.TLockDrawer.Activate := bLockDrawer;
+						TManualCmd.TLockPlate.Activate := bLockPlate;
+
+						sCurrentState.eStep := SP_ManualStp1;
+					SP_ManualStp1:
+						IF bStopReq THEN
+							sCurrentState.eStatus := MS_Stopped;
+						ELSE
+							IF (lrLiftJogStep <> TManualCmd.TLiftAxis.JogStep) THEN
+								lrLiftJogStep := TManualCmd.TLiftAxis.JogStep;
+							END_IF
+							IF TManualCmd.TLiftAxisZOffset.Teach THEN
+								lrLiftZOffset := TLiftAxis.lrCurrentPos - lrLiftPlatePos;
+								TManualCmd.TLiftAxisZOffset.Teach := FALSE;
+							END_IF
+							IF TManualCmd.TLiftAxisFullPos.Teach THEN
+								lrLiftFullPos := TLiftAxis.lrCurrentPos;
+								TManualCmd.TLiftAxisFullPos.Teach := FALSE;
+							END_IF
+
+							IF TManualCmd.TLiftAxisEmptyPos.Teach THEN
+								lrLiftEmptyPos := TLiftAxis.lrCurrentPos;
+								TManualCmd.TLiftAxisEmptyPos.Teach := FALSE;
+							END_IF
+							IF TManualCmd.TLiftAxisLoadPos.Teach THEN
+								lrLiftLoadPos := TLiftAxis.lrCurrentPos;
+								TManualCmd.TLiftAxisLoadPos.Teach := FALSE;
+							END_IF
+							IF TManualCmd.TLiftAxisFullPos.MoveToTeach.Activate THEN
+								lrLiftTargetPos := TManualCmd.TLiftAxisFullPos.TeachedPos;
+								sCurrentState.eStep := SP_ManualStp10;
+							END_IF
+
+							IF TManualCmd.TLiftAxisEmptyPos.MoveToTeach.Activate THEN
+								lrLiftTargetPos := TManualCmd.TLiftAxisEmptyPos.TeachedPos;
+								sCurrentState.eStep := SP_ManualStp10;
+							END_IF
+							IF TManualCmd.TLiftAxisLoadPos.MoveToTeach.Activate THEN
+								lrLiftTargetPos := TManualCmd.TLiftAxisLoadPos.TeachedPos;
+								sCurrentState.eStep := SP_ManualStp10;
+							END_IF
+							IF TManualCmd.TLiftAxis.MoveBw.Activate THEN
+								lrLiftTargetPos := lrLiftTargetPos - lrLiftJogStep;
+								sCurrentState.eStep := SP_ManualStp10;
+							END_IF
+							IF TManualCmd.TLiftAxis.MoveFw.Activate THEN
+								lrLiftTargetPos := lrLiftTargetPos + lrLiftJogStep;
+								sCurrentState.eStep := SP_ManualStp10;
+							END_IF
+							IF TManualCmd.TMoveToPlate.Activate THEN
+								TManualCmd.TMoveToPlate.Activate := FALSE;
+								sCurrentState.eStep := SP_ManualStp30;
+							END_IF
+							IF TManualCmd.TMoveToPlateVision.Activate THEN
+								TManualCmd.TMoveToPlateVision.Activate := FALSE;
+								lrLiftTargetPos := lrLiftPlatePos + lrLiftZOffset + lrPlateZOffsetForLift;
+								sCurrentState.eStep := SP_ManualStp10;
+							END_IF
+							IF TManualCmd.TLiftAxis.Home.Activate AND sCurrentState.eStep = SP_ManualStp1 THEN
+								sCurrentState.eStep := SP_ManualStp20;
+							END_IF
+							IF sCurrentState.eStep <> SP_ManualStp1 THEN
+								bManLockPlate := FALSE;
+							END_IF
+						END_IF
+					SP_ManualStp10: (* Do the movement *)
+						eMoveLiftAxisCommand := AC_MoveAtAbsPos;
+						lrCurrentLiftMoveSpeed := TLiftAxis.lrManualSpeed;
+						sCurrentState.eStep := SP_ManualStp11;
+					SP_ManualStp11: (* Wait until position is reached *)
+						CASE TLiftAxis.eCurrentState OF
+							AS_InPosition, AS_InError:
+								TManualCmd.TLiftAxis.MoveFw.Activate := FALSE;
+								TManualCmd.TLiftAxis.MoveBw.Activate := FALSE;
+								TManualCmd.TLiftAxis.Home.Activate := FALSE;
+		
+								TManualCmd.TLiftAxisFullPos.MoveToTeach.Activate := FALSE;
+								TManualCmd.TLiftAxisEmptyPos.MoveToTeach.Activate := FALSE;
+								TManualCmd.TLiftAxisLoadPos.MoveToTeach.Activate := FALSE;
+								sCurrentState.eStep := SP_ManualStp1;
+						END_CASE
+					SP_ManualStp20 :  (* Homing lift axis if modules are safe*)
+						eMoveLiftAxisCommand := AC_Home;
+						sCurrentState.eStep := SP_ManualStp21;
+					SP_ManualStp21 :  (* Move lift to go to load *)
+						CASE TLiftAxis.eCurrentState OF
+							AS_InPosition:
+								lrCurrentLiftMoveSpeed := TLiftAxis.lrManualSpeed;
+								lrLiftTargetPos := lrLiftLoadPos;
+								eMoveLiftAxisCommand := AC_MoveAtAbsPos;
+								sCurrentState.eStep := SP_ManualStp22;
+							AS_InError:
+								TManualCmd.TLiftAxis.Home.Activate := FALSE;
+								sCurrentState.eStep := SP_ManualStp1;
+						END_CASE
+					SP_ManualStp22 :(* Wait until init position is reached *)
+						CASE TLiftAxis.eCurrentState OF
+							AS_InPosition, AS_InError:
+								sCurrentState.eStep := SP_ManualStp1;
+								TManualCmd.TLiftAxis.Home.Activate := FALSE;
+						END_CASE
+					SP_ManualStp30 :  (* Move to plate*)
+						IF  NOT bPlateInPos THEN
+							lrLiftTargetPos := lrLiftEmptyPos; (*Go up*)
+							sCurrentState.eStep := SP_ManualStp31;
+						ELSE
+							lrLiftTargetPos := lrLiftFullPos; (*Go down*)
+							sCurrentState.eStep := SP_ManualStp32;
+						END_IF
+						lrCurrentLiftMoveSpeed := TLiftAxis.stAxisParameters.fRefVeloSearch;
+						eMoveLiftAxisCommand := AC_MoveAtAbsPos;
+					SP_ManualStp31 :  (*moving up, search plate*)
+						CASE TLiftAxis.eCurrentState OF
+							AS_InPosition: (* Lift is full *)
+								sCurrentState.eStep := SP_ManualStp1;
+							AS_InError:
+								sCurrentState.eStep := SP_ManualStp1;
+							ELSE
+								IF  bPlateInPos THEN
+									lrLiftTargetPos := lrLiftFullPos; (*Go down*)
+									sCurrentState.eStep := SP_ManualStp32;
+									eMoveLiftAxisCommand := AC_MoveAtAbsPos;
+								END_IF
+						END_CASE
+					SP_ManualStp32 :(* Moving down, out of sensor*)
+						CASE TLiftAxis.eCurrentState OF
+							AS_InPosition: (* Lift is empty *)
+								sCurrentState.eStep := SP_ManualStp1;
+							AS_InError:
+								sCurrentState.eStep := SP_ManualStp1;
+							ELSE
+								IF  NOT bPlateInPos THEN
+									lrCurrentLiftMoveSpeed := TLiftAxis.stAxisParameters.fRefVeloSync;   (* set slow speed*)
+									lrLiftTargetPos := lrLiftEmptyPos; (*Go up*)
+									sCurrentState.eStep := SP_ManualStp33;
+									eMoveLiftAxisCommand := AC_MoveAtAbsPos;
+								END_IF
+						END_CASE
+					SP_ManualStp33 :  (*moving up slowly, search plate*)
+						CASE TLiftAxis.eCurrentState OF
+							AS_InPosition: (* Lift is full *)
+								sCurrentState.eStep := SP_ManualStp1;
+							AS_InError:
+								sCurrentState.eStep := SP_ManualStp1;
+							ELSE
+								IF  bPlateInPos THEN
+									lrCurrentLiftMoveSpeed := TLiftAxis.lrManualSpeed;
+									lrLiftPlatePos := TLiftAxis.lrCurrentPos;
+									lrLiftTargetPos := lrLiftPlatePos; (*Move to current pos*)
+									sCurrentState.eStep := SP_ManualStp34;
+									eMoveLiftAxisCommand := AC_MoveAtAbsPos;
+								END_IF
+						END_CASE
+					SP_ManualStp34 :(* Wait until position is reached *)
+						CASE TLiftAxis.eCurrentState OF
+							AS_InPosition:
+								bManLockPlate := TRUE;
+								sCurrentState.eStep := SP_ManualStp1;
+							AS_InError:
+								sCurrentState.eStep := SP_ManualStp1;
+						END_CASE
+				END_CASE
+				bLockDrawer := TManualCmd.TLockDrawer.Activate;
+				bLockPlate := TManualCmd.TLockPlate.Activate;
+			MS_Paused:
+				IF bStopReq THEN
+					sCurrentState.eStatus := MS_Ready;
+				END_IF
+		END_CASE;
+	MC_Init :
+		IF sCurrentState.bInitDone THEN
+			sCurrentState.eStep := SP_InitStp99;
+		ELSE
+			sCurrentState.eStep := SP_InitStp1;
+		END_IF
+		sCurrentState.eStatus := MS_Init;
+	MC_Run :
+		sCurrentState.eStatus := MS_Running;
+	MC_Manual :
+		sCurrentState.bInitDone := FALSE;
+		sCurrentState.eStatus := MS_Manual;
+		sCurrentState.eStep := SP_ManualStp0;
+	MC_Stop :
+		sCurrentState.eStatus := MS_Stopped;
+		eMoveLiftAxisCommand := AC_Stop;
+END_CASE;
+
+IF bResetErrors THEN
+	sCurrentState.bInError := FALSE;
+END_IF
+
+IF NOT bDrawerInPos AND (TLiftAxis.eCurrentState = AS_Moving OR TLiftAxis.eCurrentState = AS_Homing) THEN
+	eMoveLiftAxisCommand := AC_ForceStop;
+END_IF
+
+(* Barrel Axis *)
+IF (sCurrentState.eStatus = MS_Manual) AND (	lrCurrentLiftMoveSpeed > TLiftAxis.lrManualSpeed) THEN
+	lrCurrentLiftMoveSpeed := TLiftAxis.lrManualSpeed;
+END_IF
+TLiftAxis(
+	eCommand		:= eMoveLiftAxisCommand,
+	lrTargetPos		:= lrLiftTargetPos,
+	lrTargetSpeed	:= lrCurrentLiftMoveSpeed,
+	sAxis			:= sLiftAxisRef,
+	bResetErrors	:= bResetErrors,
+	bHomeSensor		:= bHomeSensor,
+	bPowerIsOn		:= bPowerOn,
+	bPosLimitSwitch	:= NOT bLimitPos,
+	bNegLimitSwitch	:= NOT bLimitNeg,
+	lrMoveOutDist	:= 10,
+	stServoButton 	:= TManualCmd.TLiftAxis.ServoON
+);
+eMoveLiftAxisCommand := AC_None;
+bLiftAxisError := (TLiftAxis.eCurrentState = AS_InError);
+
+(* Check Plate locker Error *)
+TPlateLocker(
+	bJackGoOut		:= bLockPlate,
+	bJackIsIn		:= bPlateUnlocked,
+	bJackIsOut		:= bPlateLocked,
+	tTimeOut		:= T#1S,
+	bResetErrors	:= bResetErrors,
+	bJackError		=> bLockPlateError
+);
+bUnlockPlate := NOT bLockPlate;
+
+(* Check Drawer locker Error *)
+TDrawerLocker(
+	bJackGoOut		:= bLockDrawer,
+	bJackIsIn		:= bDrawerUnlocked,
+	bJackIsOut		:= bDrawerLocked,
+	tTimeOut		:= T#1S,
+	bResetErrors	:= bResetErrors,
+	bJackError		=> bLockDrawerError
+);
+bUnlockDrawer := NOT bLockDrawer;
+
+IF NOT bEnable THEN
+	bModuleError	:= FALSE;
+	bLiftAxisError := FALSE;
+	bLockDrawerError := FALSE;
+	bLockPlateError := FALSE;
+END_IF
+bDrawerIsOpen := NOT bDrawerInPos;
+sCurrentState.bWarning := bDrawerIsOpen OR bLiftBlueLight OR bWaitingForPlates;
+
+IF bResetErrors THEN
+	bLiftEmpty := FALSE;
+END_IF
+
+IF NOT bPowerOn OR bLiftAxisError OR bLockDrawerError OR bLockPlateError THEN
+	sCurrentState.bInError := TRUE;
+	IF (sCurrentState.eStatus <> MS_Manual) AND (sCurrentState.eStatus <> MS_Stopped) AND (sCurrentState.eStatus <> MS_Init) THEN
+		sCurrentState.eStatus := MS_Ready;
+	END_IF
+END_IF
+
+IF NOT bPowerOn OR bLiftAxisError OR bNewJob OR bLockDrawerError OR bLockPlateError THEN
+	sCurrentState.bInitDone := FALSE;
+	IF (sCurrentState.eStatus <> MS_Manual) THEN
+		sCurrentState.eStatus := MS_Stopped;
+	END_IF
+END_IF
+
+bNewPlate := FALSE;
+IF bPowerOn <> bLastPowerOn THEN
+	bLastPowerOn := bPowerOn;
+	IF NOT bPowerOn THEN
+		bNewPlate := bNewPlate; (* Dummy instruction, can be removed *)
+		(*bNewPlate := TRUE;*)
+	END_IF
+END_IF
+IF bDrawerIsOpen <> bLastDrawerIsOpen THEN
+	bLastDrawerIsOpen := bDrawerIsOpen;
+	IF bDrawerIsOpen THEN
+		bNewPlate := TRUE;
+	END_IF
+END_IF
+
+sCurrentState.bInterlocked := bManInterlock AND  (sCurrentState.eStatus = MS_Manual);
+bModuleError := sCurrentState.bInError;
+sCurrentState.bRunning := (sCurrentState.eStatus = MS_Running);
+IF (sCurrentState.eStatus <> MS_Running) THEN eRunStatus := RS_NotRunning; END_IF]]></ST>
+    </Implementation>
+    <LineIds Name="LiftHdl">
+      <LineId Id="1167" Count="0" />
+      <LineId Id="1169" Count="1" />
+      <LineId Id="1168" Count="0" />
+      <LineId Id="66" Count="10" />
+      <LineId Id="1079" Count="0" />
+      <LineId Id="1083" Count="2" />
+      <LineId Id="1088" Count="0" />
+      <LineId Id="1087" Count="0" />
+      <LineId Id="1086" Count="0" />
+      <LineId Id="1081" Count="1" />
+      <LineId Id="77" Count="73" />
+      <LineId Id="1427" Count="1" />
+      <LineId Id="1436" Count="2" />
+      <LineId Id="1429" Count="0" />
+      <LineId Id="152" Count="0" />
+      <LineId Id="1431" Count="3" />
+      <LineId Id="153" Count="28" />
+      <LineId Id="1332" Count="0" />
+      <LineId Id="1414" Count="0" />
+      <LineId Id="182" Count="1" />
+      <LineId Id="1334" Count="0" />
+      <LineId Id="1415" Count="0" />
+      <LineId Id="184" Count="1" />
+      <LineId Id="1335" Count="0" />
+      <LineId Id="1416" Count="0" />
+      <LineId Id="186" Count="4" />
+      <LineId Id="272" Count="0" />
+      <LineId Id="1417" Count="0" />
+      <LineId Id="273" Count="39" />
+      <LineId Id="1418" Count="0" />
+      <LineId Id="313" Count="5" />
+      <LineId Id="1419" Count="0" />
+      <LineId Id="319" Count="3" />
+      <LineId Id="1420" Count="0" />
+      <LineId Id="323" Count="4" />
+      <LineId Id="1330" Count="0" />
+      <LineId Id="328" Count="20" />
+      <LineId Id="1331" Count="0" />
+      <LineId Id="349" Count="2" />
+      <LineId Id="814" Count="0" />
+      <LineId Id="1421" Count="0" />
+      <LineId Id="815" Count="10" />
+      <LineId Id="1423" Count="0" />
+      <LineId Id="826" Count="2" />
+      <LineId Id="1609" Count="0" />
+      <LineId Id="829" Count="62" />
+      <LineId Id="903" Count="0" />
+      <LineId Id="1439" Count="0" />
+      <LineId Id="1424" Count="0" />
+      <LineId Id="1440" Count="0" />
+      <LineId Id="904" Count="0" />
+      <LineId Id="901" Count="0" />
+      <LineId Id="899" Count="0" />
+      <LineId Id="902" Count="0" />
+      <LineId Id="1425" Count="0" />
+      <LineId Id="892" Count="0" />
+      <LineId Id="896" Count="0" />
+      <LineId Id="1426" Count="0" />
+      <LineId Id="352" Count="19" />
+      <LineId Id="1061" Count="1" />
+      <LineId Id="372" Count="0" />
+      <LineId Id="1529" Count="0" />
+      <LineId Id="374" Count="16" />
+      <LineId Id="1442" Count="0" />
+      <LineId Id="1063" Count="0" />
+      <LineId Id="391" Count="0" />
+      <LineId Id="1064" Count="1" />
+      <LineId Id="392" Count="57" />
+      <LineId Id="1448" Count="0" />
+      <LineId Id="1444" Count="0" />
+      <LineId Id="1449" Count="0" />
+      <LineId Id="1072" Count="0" />
+      <LineId Id="451" Count="90" />
+      <LineId Id="1446" Count="1" />
+      <LineId Id="1445" Count="0" />
+      <LineId Id="542" Count="2" />
+      <LineId Id="1073" Count="0" />
+      <LineId Id="1076" Count="0" />
+      <LineId Id="545" Count="19" />
+      <LineId Id="1249" Count="0" />
+      <LineId Id="565" Count="28" />
+      <LineId Id="712" Count="9" />
+      <LineId Id="982" Count="0" />
+      <LineId Id="724" Count="9" />
+      <LineId Id="983" Count="0" />
+      <LineId Id="594" Count="3" />
+      <LineId Id="734" Count="1" />
+      <LineId Id="598" Count="40" />
+    </LineIds>
+  </POU>
+</TcPlcObject>

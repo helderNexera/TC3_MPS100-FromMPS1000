@@ -1,0 +1,21 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<TcPlcObject Version="1.1.0.1" ProductVersion="3.1.4022.12">
+  <DUT Name="TProbingArea" Id="{4acc44a2-0045-4e20-a22c-6b7b30ebb921}">
+    <Declaration><![CDATA[TYPE TProbingArea :
+	(
+		PA_BeforeSharpen := 0,
+		PA_AfterSharpen,
+		PA_WeightCalibration,
+		PA_PartLayering1Offset0,
+		PA_PartLayering1Offset1,
+		PA_PartLayering2Offset0,
+		PA_PartLayering2Offset1,
+		PA_PartLayering3Offset0,
+		PA_PartLayering3Offset1,
+		PA_PartLayering4Offset0,
+		PA_PartLayering4Offset1,
+		PA_END
+	);
+END_TYPE]]></Declaration>
+  </DUT>
+</TcPlcObject>

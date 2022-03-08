@@ -1,0 +1,12 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<TcPlcObject Version="1.1.0.1" ProductVersion="3.1.4022.12">
+  <DUT Name="TRunCmdBarrel" Id="{b29aa064-8836-4d27-8a1e-01464178d20a}">
+    <Declaration><![CDATA[TYPE TRunCmdBarrel :
+	(
+		RCB_None,
+		RCB_GiveStick,
+		RCB_PrepareStick
+	);
+END_TYPE]]></Declaration>
+  </DUT>
+</TcPlcObject>

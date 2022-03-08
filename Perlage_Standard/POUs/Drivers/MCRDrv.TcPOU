@@ -1,0 +1,442 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<TcPlcObject Version="1.1.0.1" ProductVersion="3.1.4022.18">
+  <POU Name="MCRDrv" Id="{a91b2da7-9808-4284-b696-7eaf488f536f}" SpecialFunc="None">
+    <Declaration><![CDATA[FUNCTION_BLOCK MCRDrv
+
+(*
+	Description 	: Function bloc to handle MCR board
+	Author		: DRE
+	Date		: 22.09.2016
+	Version		: 1.00
+
+	Modifications :
+
+*)
+
+VAR_INPUT
+	iComPort				: INT;
+	yChannel			: BYTE;
+(*	iMinDiffCurrent		: INT; *)
+	iMinThCurrent		: INT;
+	iMaxThCurrent		: INT;
+	iWarnThCurrent		: INT;
+	iCheckTime			: INT;
+	iMinCurrent			: INT;
+	iSpeedSetpoint		: INT;
+	lrRatio				: LREAL;
+	bReset				: BOOL;
+	iOffsetCurrent		: INT;
+	iCurrentRatio		: INT;
+	iMachineWO			: DINT;
+	iMachineSN			: INT;
+	yMachineSide		: BYTE;
+END_VAR
+VAR_OUTPUT
+	bCommandExecuted	: BOOL					:= TRUE;
+	bCommandError		: BOOL					:= FALSE;
+	lrCurrent				: LREAL;
+	lrPower				: LREAL;
+	iSpeed				: INT;
+	sVersion			: STRING;
+	ayChannelStatus		: ARRAY[0..1] OF BYTE;
+END_VAR
+VAR_IN_OUT
+	eCommand			: TMCRCommands;
+	RxBuffer			: ComBuffer;
+	TxBuffer			: ComBuffer;
+END_VAR
+VAR
+	bFirstPass			: BOOL					:= TRUE;
+(*	bConnect			: BOOL					:= FALSE;*)
+	bSendBusy			: BOOL;
+	bStringReceived		: BOOL;
+	bReceivedBusy		: BOOL;
+	bReceiveTimeout		: BOOL;
+	SendErrorID			: ComError_t;
+	ReceiveErrorID		: ComError_t;
+	acSuffix				: STRING(255)			 := '$r';
+	eStep				: INT					:= 1;
+	strReceived			: STRING(255);
+	strReceivedCh1			: STRING(255);
+	strReceivedCh2			: STRING(255);
+	lengthCh1			: INT := 2;
+	lengthCh2			: INT := 2;
+	posCh1			: INT	 := 2;
+	posCh2			: INT	 := 4;
+	SendString			: SendString;
+	sString2Send			: STRING(255);
+	ReceiveString		: ReceiveString;
+	ClearComBuffer		: ClearComBuffer;
+	bCanLog				: BOOL			:= FALSE;
+	acLogText			: STRING(255);
+	acLogFileName		: STRING(255);
+	fbFormat 			: FB_FormatString;
+	fbOpenFile			: FB_FileOpen;
+	fbCloseFile			: FB_FileClose;
+	fbWriteFile			: FB_FileWrite;
+	hLogFile				: UINT;
+	bOpenFile			: BOOL			:= FALSE;
+	bCloseFile			: BOOL			:= FALSE;
+	bWriteFile			: BOOL			:= FALSE;
+	sTempString			: STRING(255);
+	yCheckSum			: BYTE;
+	sLastStringRec		: STRING(255);
+	sCommandString		: STRING(255);
+	TRecTimeout			: TON;
+	iRatio				: INT;
+	abWaitingForPower	: ARRAY[0..1] OF BOOL;
+	alrPower			: ARRAY[0..1] OF LREAL;
+	bFirstError 		: BOOL 			:= 	TRUE;
+END_VAR]]></Declaration>
+    <Implementation>
+      <ST><![CDATA[IF (bFirstPass) THEN
+	ClearComBuffer(Buffer := RxBuffer);
+	fbFormat(sFormat := 'C:\MPS_HMI\logs\test%.1d.log', arg1 := F_INT(iComPort), sOut => acLogFileName);
+	bFirstPass := FALSE;
+END_IF
+
+fbOpenFile(
+	sNetId			:= 	'',
+	sPathName		:=	acLogFileName,
+	nMode			:=	FOPEN_MODEAPPEND OR FOPEN_MODETEXT ,
+	hFile			=>	hLogFile,
+	bExecute		:=	bOpenFile
+);
+IF bOpenFile THEN
+	bWriteFile := TRUE;
+END_IF
+bOpenFile := FALSE;
+
+fbCloseFile (
+	sNetId			:=	'',
+	hFile			:=	hLogFile,
+	bExecute		:=	bCloseFile
+);
+IF bCloseFile THEN
+	bWriteFile := FALSE;
+END_IF
+bCloseFile := FALSE;
+
+ReceiveString(
+	Prefix			:= ,
+	Suffix			:= acSuffix,
+	Timeout			:= t#5s,
+	Reset			:= ,
+	ReceivedString	:= strReceived,
+	RXbuffer			:= RxBuffer,
+	StringReceived	=> bStringReceived,
+	Busy			=> bReceivedBusy,
+	Error			=> ReceiveErrorID,
+	RxTimeout		=> bReceiveTimeout
+);
+IF (bStringReceived AND (ReceiveErrorID = COMERROR_NOERROR)) THEN
+	sLastStringRec := strReceived;
+	IF bWriteFile THEN
+		bCanLog := TRUE;
+		fbFormat(sFormat := '<--  %S$R$N', arg1 := F_STRING(strReceived), sOut => acLogText);
+	END_IF
+	IF (eStep = 1) THEN
+		IF (LEFT(strReceived,2) = 'p1') AND abWaitingForPower[0] THEN
+			IF (LEN(sLastStringRec) = 13) THEN
+				alrPower[0] := STRING_TO_LREAL(MID(strReceived,7,4));
+			ELSE
+				bCommandError := TRUE;
+			END_IF
+			abWaitingForPower[0] := FALSE;
+		ELSIF (LEFT(strReceived,2) = 'p1') AND abWaitingForPower[1] THEN
+			IF (LEN(sLastStringRec) = 13) THEN
+				alrPower[1] := STRING_TO_LREAL(MID(strReceived,7,4));
+			ELSE
+				bCommandError := TRUE;
+			END_IF
+			abWaitingForPower[1] := FALSE;
+		END_IF
+	END_IF
+END_IF
+
+CASE eStep OF
+	1 : (* Check the command *)
+		CASE eCommand OF
+			MCRC_ConfigMeasure :
+				fbFormat(sFormat := 'C%.1d,%.2d,%.3d', arg1 := F_BYTE(yChannel),arg2 := F_INT(iMinCurrent), arg3 := F_INT(iCheckTime), sOut => sTempString);
+				eStep := 2;
+			MCRC_ReadCurrent :
+				fbFormat(sFormat := 'I%.1d', arg1 := F_BYTE(yChannel), sOut => sTempString);
+				eStep := 2;
+			MCRC_StartPower :
+				fbFormat(sFormat := 'P%.1d', arg1 := F_BYTE(yChannel), sOut => sTempString);
+				abWaitingForPower[yChannel-1] := TRUE;
+				alrPower[yChannel-1] := 0;
+				eStep := 2;
+			MCRC_ReadSpeed :
+				fbFormat(sFormat := 'S%.1d', arg1 := F_BYTE(yChannel), sOut => sTempString);
+				eStep := 2;
+			MCRC_GetPower :
+				abWaitingForPower[yChannel-1] := FALSE;
+				lrPower := alrPower[yChannel-1];
+				bCommandExecuted := TRUE;
+			MCRC_GetVersion :
+				sTempString :=  'V';
+				eStep := 2;
+			MCRC_SetParam :
+				IF(iOffsetCurrent < 0)THEN
+					fbFormat(sFormat := 'W%.1d,%.4d,%.5d', arg1 := F_BYTE(yChannel),arg2 := F_INT(iOffsetCurrent), arg3 := F_INT(iCurrentRatio), sOut => sTempString);
+				ELSE
+					fbFormat(sFormat := 'W%.1d,%.5d,%.5d', arg1 := F_BYTE(yChannel),arg2 := F_INT(iOffsetCurrent), arg3 := F_INT(iCurrentRatio), sOut => sTempString);
+				END_IF
+				eStep := 2;
+			MCRC_GetParam :
+				fbFormat(sFormat := 'R%.1d', arg1 := F_BYTE(yChannel), sOut => sTempString);
+				eStep := 2;
+			MCRC_SetSpeed :
+				fbFormat(sFormat := 'T%.1d,%.4d', arg1 := F_BYTE(yChannel), arg2 := F_INT(iSpeedSetpoint), sOut => sTempString);
+				eStep := 2;
+			MCRC_SetRatio:
+				iRatio := LREAL_TO_INT(lrRatio*100.0);
+				fbFormat(sFormat := 'D%.1d,%.4d', arg1 := F_BYTE(yChannel), arg2 := F_INT(iRatio), sOut => sTempString);
+				eStep := 2;
+			MCRC_UpdateMemory:
+				sTempString :=  'K';
+				eStep := 2;
+			MCRC_DefineCurrentThr :
+				fbFormat(sFormat := 'M%.1d,%.3d,%.3d,%.3d', arg1 := F_BYTE(yChannel), arg2 := F_INT(iMinThCurrent),  arg3 := F_INT(iMaxThCurrent),  arg4 := F_INT(iWarnThCurrent), sOut => sTempString);
+				eStep := 2;
+			MCRC_DefineMachineID :
+				fbFormat(sFormat := 'X,%.6d%.3d%c', arg1 := F_DINT(iMachineWO), arg2 := F_INT(iMachineSN),  arg3 := F_BYTE(yMachineSide), sOut => sTempString);
+				eStep := 2;
+			MCRC_GetStatus :
+				sTempString :=  'Z';
+				eStep := 2;
+		END_CASE
+		IF (eStep = 2) THEN
+			bCommandExecuted := FALSE;
+			yCheckSum := yCalcCheckSum(sTempString);
+			yCheckSum := 0;
+			fbFormat(sFormat := '%s%.2x%s', arg1 := F_STRING(sTempString), arg2 := F_BYTE(yCheckSum), arg3 := F_STRING(acSuffix), sOut => sString2Send);
+			SendString(
+				SendString	:= sString2Send,
+				TXbuffer		:= TxBuffer,
+				Busy		=> bSendBusy,
+				Error		=> SendErrorID);
+			IF bWriteFile THEN
+				bCanLog := TRUE;
+				fbFormat(sFormat := '-->  %S$R$N', arg1 := F_STRING(sString2Send), sOut => acLogText);
+			END_IF
+		END_IF
+	2 : (* Wait until the end of transmission *)
+		IF (SendErrorID = 0) THEN
+			IF NOT bSendBusy THEN
+				IF (eCommand = MCRC_StartPower) THEN
+					eStep := 1;
+					bCommandExecuted := TRUE;
+					eCommand := MCRC_None;
+				ELSE
+					TRecTimeout(IN := FALSE);
+					eStep := 3;
+				END_IF
+			END_IF
+		END_IF
+	3: (* Wait for the answer *)
+		TRecTimeout(IN := TRUE,PT := t#5s);
+		IF (ReceiveErrorID = 0) AND NOT bReceiveTimeout THEN
+			IF bStringReceived  THEN
+				eStep := 4;
+			END_IF
+		END_IF
+		IF TRecTimeout.Q THEN
+			strReceived := '';
+			bCanLog := TRUE;
+			fbFormat(sFormat := '<--  Timeout', sOut => acLogText);
+			eStep := 4;
+		END_IF
+	4 : (* Process the line *)
+		(* First check if checksum is OK *)
+		yCheckSum := yCalcCheckSum(LEFT(sLastStringRec,LEN(sLastStringRec)-3));
+		sCommandString := LEFT(sLastStringRec,LEN(sLastStringRec)-3);
+		fbFormat(sFormat := '%s%.2x%s', arg1 := F_STRING(sCommandString), arg2 := F_BYTE(yCheckSum), arg3 := F_STRING(acSuffix), sOut => sTempString);
+		IF (sTempString = strReceived) THEN
+			CASE eCommand OF
+				MCRC_ConfigMeasure :
+					fbFormat(sFormat := 'c%01d', arg1 := F_BYTE(yChannel), sOut => sTempString);
+					IF (LEN(sLastStringRec) = 5) AND (LEFT(strReceived,2) = sTempString) THEN
+						eStep := 1;
+					ELSE
+						eStep := 0; (* error *)
+					END_IF
+				MCRC_ReadCurrent :
+					fbFormat(sFormat := 'i%01d,', arg1 := F_BYTE(yChannel), sOut => sTempString);
+					lrCurrent := STRING_TO_LREAL(MID(sLastStringRec,6,4));
+					IF (LEN(sLastStringRec) = 12) AND (LEFT(strReceived,3) = sTempString) THEN
+						eStep := 1;
+					ELSE
+						eStep := 0; (* error *)
+					END_IF
+				MCRC_ReadSpeed :
+					fbFormat(sFormat := 's%01d,', arg1 := F_BYTE(yChannel), sOut => sTempString);
+					iSpeed := STRING_TO_INT(MID(sLastStringRec,4,4));
+					IF (LEN(sLastStringRec) = 10) AND (LEFT(strReceived,3) = sTempString) THEN
+						eStep := 1;
+					ELSE
+						eStep := 0; (* error *)
+					END_IF
+				MCRC_GetVersion :
+					IF (LEN(sLastStringRec) = 10) AND (LEFT(strReceived,1) = 'v') THEN
+						sVersion := MID(sLastStringRec,6,2);
+						eStep := 1;
+					ELSE
+						eStep := 0; (* error *)
+					END_IF
+				MCRC_SetParam :
+					fbFormat(sFormat := 'w%01d', arg1 := F_BYTE(yChannel), sOut => sTempString);
+					IF (LEN(sLastStringRec) = 5) AND (LEFT(strReceived,2) = sTempString) THEN
+						eStep := 1;
+					ELSE
+						eStep := 0; (* error *)
+					END_IF
+				MCRC_GetParam :
+					fbFormat(sFormat := 'r%01d,', arg1 := F_BYTE(yChannel), sOut => sTempString);
+					iOffsetCurrent := STRING_TO_INT(MID(sLastStringRec,5,4));
+					iCurrentRatio := STRING_TO_INT(MID(sLastStringRec,5,10));
+					IF (LEN(sLastStringRec) = 17) AND (LEFT(strReceived,3) = sTempString) THEN
+						eStep := 1;
+					ELSE
+						eStep := 0; (* error *)
+					END_IF
+				MCRC_StartPower :
+					fbFormat(sFormat := 'g%01d', arg1 := F_BYTE(yChannel), sOut => sTempString);
+					IF (LEN(sLastStringRec) = 5) AND (LEFT(strReceived,2) = sTempString) THEN
+						eStep := 1;
+					ELSE
+						eStep := 0; (* error *)
+					END_IF
+				MCRC_GetPower :
+					fbFormat(sFormat := 'p%01d', arg1 := F_BYTE(yChannel), sOut => sTempString);
+					IF (LEN(sLastStringRec) >= 13) THEN
+						lrPower := STRING_TO_LREAL(MID(strReceived,7,4));
+					ELSE
+						bCommandError := TRUE;
+					END_IF
+				MCRC_SetSpeed :
+					fbFormat(sFormat := 't%01d', arg1 := F_BYTE(yChannel), sOut => sTempString);
+					IF (LEN(sLastStringRec) = 5) AND (LEFT(strReceived,2) = sTempString) THEN
+						eStep := 1;
+					ELSE
+						eStep := 0; (* error *)
+					END_IF
+				MCRC_SetRatio :
+					fbFormat(sFormat := 'd%01d', arg1 := F_BYTE(yChannel), sOut => sTempString);
+					IF (LEN(sLastStringRec) = 5) AND (LEFT(strReceived,2) = sTempString) THEN
+						eStep := 1;
+					ELSE
+						eStep := 0; (* error *)
+					END_IF
+				MCRC_UpdateMemory :
+					sTempString := 'k';
+					IF (LEN(sLastStringRec) = 4) AND (LEFT(strReceived,1) = sTempString) THEN
+						eStep := 1;
+					ELSE
+						eStep := 0; (* error *)
+					END_IF
+				MCRC_DefineCurrentThr :
+					fbFormat(sFormat := 'm%01d', arg1 := F_BYTE(yChannel), sOut => sTempString);
+					IF (LEN(sLastStringRec) = 5) AND (LEFT(strReceived,2) = sTempString) THEN
+						eStep := 1;
+					ELSE
+						eStep := 0; (* error *)
+					END_IF
+				MCRC_DefineMachineID :
+					sTempString := 'x';
+					IF (LEN(sLastStringRec) = 4) AND (LEFT(strReceived,1) = sTempString) THEN
+						eStep := 1;
+					ELSE
+						eStep := 0; (* error *)
+					END_IF
+				MCRC_GetStatus :
+					sTempString := 'z';
+					IF (LEN(sLastStringRec) = 8) THEN
+						ayChannelStatus[0] := STRING_TO_BYTE(MID(strReceived,2,2));
+						ayChannelStatus[1] := STRING_TO_BYTE(MID(strReceived,2,4));
+					ELSE
+						bCommandError := TRUE;
+					END_IF
+			END_CASE
+		ELSE
+			eStep := 0;
+		END_IF
+		
+		IF eStep = 0 THEN
+			IF bFirstError THEN
+				bFirstError := FALSE;
+				eStep := 1;
+			ELSE
+				bCommandExecuted := TRUE;
+			END_IF
+		ELSE
+			bCommandExecuted := TRUE;
+		END_IF
+		IF bCommandExecuted THEN
+			bFirstError := TRUE;
+			bCommandError := (eStep = 0);
+			eStep := 1;
+			eCommand := MCRC_None;
+		END_IF
+END_CASE
+
+IF bWriteFile THEN
+	fbWriteFile (
+		sNetId			:=	'',
+		hFile			:=	hLogFile,
+		pWriteBuff		:=	ADR(acLogText),
+		cbWriteLen		:=	INT_TO_UDINT(LEN(acLogText)),
+		bExecute		:=	bCanLog
+	);
+	bCanLog := FALSE;
+END_IF
+
+IF bReset THEN
+	bCommandError := FALSE;
+END_IF]]></ST>
+    </Implementation>
+    <LineIds Name="MCRDrv">
+      <LineId Id="76" Count="89" />
+      <LineId Id="735" Count="0" />
+      <LineId Id="741" Count="0" />
+      <LineId Id="738" Count="0" />
+      <LineId Id="740" Count="0" />
+      <LineId Id="737" Count="0" />
+      <LineId Id="167" Count="10" />
+      <LineId Id="400" Count="0" />
+      <LineId Id="404" Count="0" />
+      <LineId Id="403" Count="0" />
+      <LineId Id="420" Count="0" />
+      <LineId Id="428" Count="1" />
+      <LineId Id="431" Count="2" />
+      <LineId Id="523" Count="2" />
+      <LineId Id="178" Count="122" />
+      <LineId Id="405" Count="6" />
+      <LineId Id="413" Count="6" />
+      <LineId Id="437" Count="6" />
+      <LineId Id="526" Count="3" />
+      <LineId Id="533" Count="0" />
+      <LineId Id="530" Count="2" />
+      <LineId Id="301" Count="3" />
+      <LineId Id="626" Count="0" />
+      <LineId Id="628" Count="0" />
+      <LineId Id="632" Count="0" />
+      <LineId Id="637" Count="0" />
+      <LineId Id="642" Count="0" />
+      <LineId Id="640" Count="0" />
+      <LineId Id="646" Count="0" />
+      <LineId Id="639" Count="0" />
+      <LineId Id="629" Count="0" />
+      <LineId Id="647" Count="0" />
+      <LineId Id="630" Count="0" />
+      <LineId Id="648" Count="0" />
+      <LineId Id="627" Count="0" />
+      <LineId Id="305" Count="1" />
+      <LineId Id="308" Count="0" />
+      <LineId Id="623" Count="0" />
+      <LineId Id="309" Count="15" />
+    </LineIds>
+  </POU>
+</TcPlcObject>

@@ -1,0 +1,13 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<TcPlcObject Version="1.1.0.1" ProductVersion="3.1.4022.12">
+  <DUT Name="TPearlingAxis" Id="{7d44c637-5efd-460c-88ed-449cbed0dd37}">
+    <Declaration><![CDATA[TYPE TPearlingAxis :
+	(
+		PA_X := 0,
+		PA_Y,
+		PA_Z1,
+		PA_Z2
+	);
+END_TYPE]]></Declaration>
+  </DUT>
+</TcPlcObject>

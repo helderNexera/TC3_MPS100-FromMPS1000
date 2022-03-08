@@ -1,0 +1,47 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<TcPlcObject Version="1.1.0.1" ProductVersion="3.1.4022.12">
+  <POU Name="MTBFCounter" Id="{775ca26e-c7ee-41e3-8037-f174806fb7e7}" SpecialFunc="None">
+    <Declaration><![CDATA[FUNCTION_BLOCK MTBFCounter
+VAR_INPUT
+	bStart 				: BOOL;
+	bReset 				: BOOL;
+END_VAR
+VAR_OUTPUT
+	dwSeconds			: DWORD;
+END_VAR
+VAR PERSISTENT
+	TRunningTime		: TIME					:= t#0s;
+	dwRunningHours		: DWORD				:= 0;
+END_VAR
+VAR
+	TRunningTimer		: TON;
+END_VAR
+]]></Declaration>
+    <Implementation>
+      <ST><![CDATA[IF bReset THEN
+	TRunningTime := t#0s;
+	dwRunningHours := 0;
+	TRunningTimer(IN := FALSE);
+ELSE
+	IF bStart AND NOT TRunningTimer.Q THEN
+		TRunningTimer(IN := TRUE,PT := t#1m);
+	ELSE
+		TRunningTime := TRunningTime + TRunningTimer.ET;
+		TRunningTimer(IN := FALSE);
+		IF bStart THEN TRunningTimer(IN := TRUE,PT := t#6000m); END_IF
+	END_IF
+
+	IF (TRunningTime > t#60m) THEN
+		dwRunningHours := dwRunningHours + 1;
+		TRunningTime := TRunningTime - t#60m;
+	END_IF
+END_IF
+dwSeconds := dwRunningHours*60*60 + TIME_TO_DWORD(TRunningTime + TRunningTimer.ET )/1000;
+
+]]></ST>
+    </Implementation>
+    <LineIds Name="MTBFCounter">
+      <LineId Id="16" Count="20" />
+    </LineIds>
+  </POU>
+</TcPlcObject>

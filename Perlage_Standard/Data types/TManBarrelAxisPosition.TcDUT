@@ -1,0 +1,15 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<TcPlcObject Version="1.1.0.1" ProductVersion="3.1.4022.12">
+  <DUT Name="TManBarrelAxisPosition" Id="{95e67fc0-e213-4d86-817b-8d7991dc21b4}">
+    <Declaration><![CDATA[{attribute 'pack_mode' := '1'}
+TYPE TManBarrelAxisPosition :
+STRUCT
+		TMove1Step				: TManButton;
+		TMoveSectionA			: TManButton;
+		TMoveSectionB			: TManButton;
+		TMoveSectionC			: TManButton;
+		TMoveSectionD			: TManButton;
+END_STRUCT
+END_TYPE]]></Declaration>
+  </DUT>
+</TcPlcObject>

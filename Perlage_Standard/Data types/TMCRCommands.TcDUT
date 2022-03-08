@@ -1,0 +1,23 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<TcPlcObject Version="1.1.0.1" ProductVersion="3.1.4022.12">
+  <DUT Name="TMCRCommands" Id="{35d95637-229d-4e46-a1ce-7fd6e9ede016}">
+    <Declaration><![CDATA[TYPE TMCRCommands :
+	(	MCRC_None,
+		MCRC_ConfigMeasure,
+		MCRC_SetRatio,
+		MCRC_StartPower,
+		MCRC_ReadCurrent,
+		MCRC_UpdateMemory,
+		MCRC_DefineCurrentThr,
+		MCRC_GetPower,
+		MCRC_GetParam,
+		MCRC_ReadSpeed,
+		MCRC_SetSpeed,
+		MCRC_GetVersion,
+		MCRC_SetParam,
+		MCRC_DefineMachineID,
+		MCRC_GetStatus
+	);
+END_TYPE]]></Declaration>
+  </DUT>
+</TcPlcObject>

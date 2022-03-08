@@ -1,0 +1,21 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<TcPlcObject Version="1.1.0.1" ProductVersion="3.1.4022.12">
+  <DUT Name="TStickDataMMIShared" Id="{2bf9a47a-7cf9-4859-af97-c5798b1edf06}">
+    <Declaration><![CDATA[{attribute 'pack_mode' := '1'}
+TYPE TStickDataMMIShared :
+STRUCT
+	iNbOfFwBwSharpen			: INT;
+	iNbOfFwBwBeforeTapeMove	: INT;
+	lrSharpenSpeed				: LREAL;
+	lrSharpenHeight				: LREAL;
+	bRestartBeginOfArea			: BOOL;
+	lrMinHoldLength				: LREAL;
+	bStopOnVacuumLoss			: BOOL;
+	bStopOnStickBreak			: BOOL;
+	iMCRSharpenSpeed			: INT;
+	iWeightTolerance				: INT;
+	bStopOnWeightOutOfTolerance	: BOOL;
+END_STRUCT
+END_TYPE]]></Declaration>
+  </DUT>
+</TcPlcObject>

@@ -1,0 +1,13 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<TcPlcObject Version="1.1.0.1" ProductVersion="3.1.4022.12">
+  <DUT Name="TLoaderPlatePos" Id="{b90372fe-1445-48c0-91f8-6cc43118cc70}">
+    <Declaration><![CDATA[TYPE TLoaderPlatePos :
+	(
+		LPP_Reject := 0,
+		LPP_Lift1,
+		LPP_Lift2
+	);
+END_TYPE
+]]></Declaration>
+  </DUT>
+</TcPlcObject>

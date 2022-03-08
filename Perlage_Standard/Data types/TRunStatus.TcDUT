@@ -1,0 +1,13 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<TcPlcObject Version="1.1.0.1" ProductVersion="3.1.4022.12">
+  <DUT Name="TRunStatus" Id="{2e72993d-03e6-4ac8-8a62-a0f5b3207657}">
+    <Declaration><![CDATA[TYPE TRunStatus :
+	(
+		RS_WaitRequest,
+		RS_ProcessRequest1,
+		RS_ProcessRequest2,
+		RS_NotRunning
+	);
+END_TYPE]]></Declaration>
+  </DUT>
+</TcPlcObject>

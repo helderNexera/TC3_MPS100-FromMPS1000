@@ -1,0 +1,46 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<TcPlcObject Version="1.1.0.1" ProductVersion="3.1.4022.12">
+  <POU Name="FB_AspirationValve" Id="{f5e9bec3-327c-4327-90fd-15e1e4ef6d3d}" SpecialFunc="None">
+    <Declaration><![CDATA[FUNCTION_BLOCK FB_AspirationValve
+(*
+	Description 	: Bloc fonction de gestion d'un module de mise sous vide
+	Auteur		: DLA
+	Date		: 26.03.2014
+	Version		: 1.00
+
+	Modifications :
+
+*)
+VAR_INPUT
+	bEnableAspiration			: BOOL	:= FALSE;			(* Demande d'activation du vacuum *)
+(*	tBlowingTime				: TIME	:= t#200ms;*)			(* Temps de soufflage à la coupure du vacuum *)
+END_VAR
+VAR_OUTPUT
+	bVacuumOn				: BOOL	:= FALSE;			(* Activation du vacuum *)
+	bBlowOn					: BOOL	:= FALSE;			(* Activation du soufflage *)
+END_VAR
+VAR
+(*	TBlow					: TON;*)
+END_VAR]]></Declaration>
+    <Implementation>
+      <ST><![CDATA[(*La commande de vacuum est directement reliée à la requête*)
+bVacuumOn := bEnableAspiration;
+bBlowOn := NOT bEnableAspiration;
+
+(*
+(*On fait tourner les timers de détection de vacuum et de soufflage*)
+TBlow(IN:=NOT bEnableAspiration,PT:=tBlowingTime);
+
+IF bEnableAspiration THEN
+	bBlowOn := FALSE;
+ELSE
+	(*On contrôle que le vacuum s'est bien coupé aprés le soufflage*)
+	bBlowOn := NOT TBlow.Q;
+END_IF
+*)]]></ST>
+    </Implementation>
+    <LineIds Name="FB_AspirationValve">
+      <LineId Id="21" Count="14" />
+    </LineIds>
+  </POU>
+</TcPlcObject>

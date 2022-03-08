@@ -1,0 +1,16 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<TcPlcObject Version="1.1.0.1" ProductVersion="3.1.4022.12">
+  <DUT Name="TRunDataPearling" Id="{2c0a72c0-fe81-4d5c-a494-76b0cd46f827}">
+    <Declaration><![CDATA[{attribute 'pack_mode' := '1'}
+TYPE TRunDataPearling :
+STRUCT
+		abUseSpindle				: ARRAY[0..1] OF BOOL;
+		sPearlingData				: TPearlingDataHead;
+		iLayringPos					: INT;
+		iLayringOffsetPos				: INT;
+		apsPartData					: ARRAY[0..1] OF POINTER TO TPartData;
+		bForceSharpenAfterPearling	: BOOL;
+END_STRUCT
+END_TYPE]]></Declaration>
+  </DUT>
+</TcPlcObject>

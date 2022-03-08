@@ -1,0 +1,506 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<TcPlcObject Version="1.1.0.1" ProductVersion="3.1.4022.18">
+  <POU Name="TurnOverHdl" Id="{960dc349-2c9f-45ac-b2f4-ab8354b4deba}" SpecialFunc="None">
+    <Declaration><![CDATA[FUNCTION_BLOCK TurnOverHdl
+
+(*
+	Description 	: Bloc fonction de gestion du retourneur
+	Auteur		: GRM
+	Date		: 26.03.2014
+	Version		: 1.00
+
+	Modifications :
+
+*)
+
+VAR_INPUT
+	bEnable						: BOOL;
+	bPowerOn					: BOOL;
+	bResetErrors					: BOOL;
+	bIndexTurnOver				: BOOL;
+	bFixVacuumOk				: BOOL;
+	bArmVacuumOk				: BOOL;
+	bJackIsDown					: BOOL;
+	bJackIsUp					: BOOL;
+	bStopReq					: BOOL;
+	bPauseReq					: BOOL;
+	eCommand					: TModuleCommands;
+	eRunCommand				:TRunCmdTurnOver;
+	sInGiveToLoader				: TTaker;
+	sInTakeFromLoader			: TGiver;
+	bManInterlock				: BOOL;
+	sVaccumSettings				: TVaccumSettings;
+END_VAR
+VAR_OUTPUT
+	bModuleError					: BOOL;
+	bJackError					: BOOL;
+	bArmVacuumError				: BOOL;
+	bFixVacuumError				: BOOL;
+	bTurnOverAxisError			: BOOL;
+	bMoveJackDown				: BOOL;
+	bMoveJackUp				: BOOL;
+	bActivateArmVacuum			: BOOL;
+	bActivateArmBlowing			: BOOL;
+	bActivateFixVacuum			: BOOL;
+	bActivateFixBlowing			: BOOL;
+	bActivateCleaningBlow			: BOOL;
+	eRunStatus					: TRunStatus;
+	sOutGiveToLoader			: TGiver;
+	sOutTakeFromLoader			: TTaker;
+	sRunData					: TRunDataTurnOver;
+	bManInterlockOut				: BOOL;
+END_VAR
+VAR_IN_OUT
+	sCurrentState					: TModuleData;
+	TManualCmd					: TManTurnOver;
+	sTurnOverAxisRef				: AXIS_REF;
+END_VAR
+VAR CONSTANT
+	lrSafeTolerance 				:LREAL 					:= 1;			(* Tolerance for safety axis *)
+END_VAR
+VAR PERSISTENT
+	lrTurnOverIndexPos			: LREAL					:= 0;			(* Positionnement du retourneur en position attente *)
+	lrTurnOverFlippedPos			: LREAL					:= 180;		(* Positionnement du retourneur en position retourné *)
+	lrTurnOverJogStep			: LREAL					:= 1;
+END_VAR
+VAR
+	bEnableArmVacuum			: BOOL;
+	bEnableFixVacuum			: BOOL;
+	bDisableArmVacuumChecking	: BOOL;
+	bDisableFixVacuumChecking	: BOOL;
+	eMoveTurnOverAxisCommand	: TAxisCommands	:= AC_None;
+	lrTurnOverTargetPos			: LREAL;
+	TTurnOverAxis				: StdAxis;
+	TJack						: FB_CheckJack2_2;
+	TArmVacuum					: FB_Vacuum;
+	TFixVacuum					: FB_Vacuum;
+	lrCurrentTurnOverMoveSpeed	: LREAL;
+	TCleanFixTimer				: TON;
+	TVacuumTimer				: TON;
+	eLastStatus 					: TModuleStatus := MS_Stopped;
+END_VAR]]></Declaration>
+    <Implementation>
+      <ST><![CDATA[IF (NOT sCurrentState.bStepMode) THEN
+	sCurrentState.bWaitStep := FALSE;
+END_IF
+
+IF eLastStatus<>sCurrentState.eStatus THEN
+	IF eLastStatus=MS_Manual THEN
+		(*Leave manual mode, redefine part present base on vacuum *)
+		IF NOT bActivateArmVacuum THEN
+			sRunData.aTPartData[TO_Arm].bPartPresent := FALSE;
+		END_IF
+		IF NOT bEnableFixVacuum THEN
+			sRunData.aTPartData[TO_Fix].bPartPresent := FALSE;
+		END_IF
+	END_IF
+	IF eLastStatus=MS_Running OR sCurrentState.eStatus=MS_Manual THEN
+		(* Set vaccum base on part present, Vacuum can be disable if take part has failed*)
+		bActivateArmVacuum := sRunData.aTPartData[TO_Arm].bPartPresent;
+		bEnableFixVacuum := sRunData.aTPartData[TO_Fix].bPartPresent;
+	END_IF
+	eLastStatus := sCurrentState.eStatus;
+END_IF
+
+CASE eCommand OF
+	MC_NoCmd :
+		CASE sCurrentState.eStatus OF
+			MS_Init :
+				CASE sCurrentState.eStep OF
+					SP_InitStp1 :
+						IF bEnable THEN
+							bActivateCleaningBlow := FALSE;
+							bDisableArmVacuumChecking := FALSE;
+							bDisableFixVacuumChecking := FALSE;
+							TVacuumTimer(IN := FALSE);
+							(*bActivateArmVacuum := TRUE;
+							bEnableFixVacuum := TRUE;*)
+							sCurrentState.eStep := SP_InitStp2;
+						ELSE
+							sCurrentState.eStep := SP_InitStp99;
+						END_IF
+					SP_InitStp2 :
+						TVacuumTimer(IN := TRUE, PT := t#0s);
+						IF TVacuumTimer.Q THEN
+							(* Check where there is parts *)
+							(*IF TArmVacuum.bVacuumCorrect THEN sRunData.aTPartData[TO_Arm].bPartPresent := TRUE; END_IF
+							IF TFixVacuum.bVacuumCorrect THEN sRunData.aTPartData[TO_Fix].bPartPresent := TRUE; END_IF*)
+							bActivateArmVacuum := sRunData.aTPartData[TO_Arm].bPartPresent;
+							bEnableFixVacuum := sRunData.aTPartData[TO_Fix].bPartPresent;
+							IF sCurrentState.bInitDone THEN
+								sCurrentState.eStep := SP_InitStp99;
+							ELSE
+								sCurrentState.eStep := SP_InitStp3;
+							END_IF
+						END_IF
+					SP_InitStp3 : (* Lower the jack *)
+						bMoveJackUp := FALSE;
+						sCurrentState.eStep := SP_InitStp4;
+					SP_InitStp4 : (* Check if jack is up *)
+						IF bJackIsDown THEN
+							sCurrentState.eStep := SP_InitStp5;
+						END_IF
+					SP_InitStp5 : (* Init turn over axis *)
+						eMoveTurnOverAxisCommand := AC_Init;
+						sCurrentState.eStep := SP_InitStp6;
+					SP_InitStp6 : (* Rotate the turn over to go to index position *)
+						IF TTurnOverAxis.eCurrentState = AS_InPosition THEN
+							lrTurnOverTargetPos := lrTurnOverIndexPos;
+							eMoveTurnOverAxisCommand := AC_MoveAtAbsPos;
+							sCurrentState.eStep := SP_InitStp7;
+						END_IF
+					SP_InitStp7 : (* Wait until index position is reached *)
+						IF TTurnOverAxis.eCurrentState = AS_InPosition THEN
+							sCurrentState.eStep := SP_InitStp99;
+						END_IF
+					SP_InitStp99 : (* Leave Init *)
+						sCurrentState.eStep := SP_RunStp1;
+						sCurrentState.eStatus := MS_Ready;
+						sCurrentState.bInitDone := TRUE;
+				END_CASE
+			MS_Running :
+				IF (NOT sCurrentState.bWaitStep) THEN
+					CASE sCurrentState.eStep OF
+						SP_RunStp1 :
+							eRunStatus := RS_WaitRequest;
+							IF bEnable THEN
+								CASE eRunCommand OF
+									RCTO_None:
+										IF bStopReq  THEN
+											sCurrentState.eStatus := MS_Ready;
+										ELSIF bPauseReq  THEN
+											sCurrentState.eStatus := MS_Paused;
+										END_IF
+									RCTO_TakePart:
+										sOutTakeFromLoader.bReadyToTake := FALSE;
+										sOutTakeFromLoader.bHasTaken := FALSE;
+										sCurrentState.eStep := SP_RunStp10;
+									RCTO_GivePart:
+										sOutGiveToLoader.bHasGiven := FALSE;
+										sOutGiveToLoader.bPartDataReady := FALSE;
+										sCurrentState.eStep := SP_RunStp20;
+									RCTO_Turn:
+										sCurrentState.eStep := SP_RunStp30;
+								END_CASE
+							ELSE
+								IF bStopReq  THEN
+									sCurrentState.eStatus := MS_Ready;
+								ELSIF bPauseReq  THEN
+									sCurrentState.eStatus := MS_Paused;
+								END_IF
+							END_IF
+							IF sCurrentState.eStep<> SP_RunStp1 THEN eRunStatus := RS_ProcessRequest1; END_IF
+						SP_RunStp10 :  (*Take Part*)
+							IF sInTakeFromLoader.bPartDataReady THEN
+								sRunData.aTPartData[TO_Arm] := sInTakeFromLoader.TPartData;
+								sRunData.aTPartData[TO_Arm].bPartPresent := FALSE;
+								sCurrentState.eStep := SP_RunStp11;
+							END_IF
+						SP_RunStp11 :
+							bEnableArmVacuum := TRUE;
+							bDisableArmVacuumChecking := TRUE;
+							sOutTakeFromLoader.bReadyToTake := TRUE;
+							sCurrentState.eStep := SP_RunStp12;
+						SP_RunStp12 :
+							(* Wait until left loader has given *)
+							IF sInTakeFromLoader.bHasGiven THEN
+								bDisableArmVacuumChecking := FALSE;
+								sCurrentState.eStep := SP_RunStp13;
+							END_IF
+						SP_RunStp13 :
+							(* Check if the part is on arm *)
+							IF TArmVacuum.bVacuumCorrect THEN
+								sOutTakeFromLoader.bHasTaken := TRUE;
+								sRunData.aTPartData[TO_Arm].bPartPresent := TRUE;
+								sCurrentState.eStep := SP_RunStp1;
+							END_IF
+						SP_RunStp20 : (*Give Part*)
+							sOutGiveToLoader.TPartData := sRunData.aTPartData[TO_Fix];
+							sOutGiveToLoader.bPartDataReady := TRUE;
+							sCurrentState.eStep := SP_RunStp21;
+						SP_RunStp21 :
+							IF sInGiveToLoader.bReadyToTake THEN
+								bEnableFixVacuum := FALSE;
+								sCurrentState.eStep := SP_RunStp22;
+							END_IF
+						SP_RunStp22 :
+							(* Check if laying vacuum is disabled *)
+							IF TFixVacuum.bVacuumCorrect THEN
+								sOutGiveToLoader.bHasGiven := TRUE;
+								sCurrentState.eStep := SP_RunStp23;
+							END_IF
+						SP_RunStp23 :
+							(* Check if right loader has taken the plate *)
+							IF sInGiveToLoader.bHasTaken THEN
+								sRunData.aTPartData[TO_Fix].bPartPresent := FALSE;
+								sCurrentState.eStep := SP_RunStp1;
+							END_IF
+						SP_RunStp30 : (*TurnOver *)
+							bActivateCleaningBlow := TRUE;
+							TCleanFixTimer(IN:=FALSE);
+							sCurrentState.eStep := SP_RunStp31;
+						SP_RunStp31 :
+							TCleanFixTimer(IN :=TRUE,PT := t#1s);
+							IF TCleanFixTimer.Q THEN
+								bActivateCleaningBlow := FALSE;
+								sCurrentState.eStep := SP_RunStp32;
+							END_IF
+						SP_RunStp32 :
+							lrTurnOverTargetPos := lrTurnOverFlippedPos;
+							eMoveTurnOverAxisCommand := AC_MoveAtAbsPos;
+							sCurrentState.eStep := SP_RunStp33;
+						SP_RunStp33 :
+							(* Wait until flip position is reached - Raise Jack *)
+							IF TTurnOverAxis.eCurrentState = AS_InPosition THEN
+								bMoveJackUp := TRUE;
+								sCurrentState.eStep := SP_RunStp34;
+							END_IF
+						SP_RunStp34 :
+							(* Check if jack is up - Enable laying vacuum and disable manipulator vacuum *)
+							IF bJackIsUp THEN
+								sRunData.aTPartData[TO_Fix] := sRunData.aTPartData[TO_Arm];
+								sRunData.aTPartData[TO_Fix].ePartSide := PS_SOUS;
+								bEnableFixVacuum := TRUE;
+								bEnableArmVacuum := FALSE;
+								sCurrentState.eStep := SP_RunStp35;
+							END_IF
+						SP_RunStp35 :
+							(* Wait until laying vacuum is OK - Lower Jack *)
+							IF TFixVacuum.bVacuumCorrect AND TArmVacuum.bVacuumCorrect THEN
+								sRunData.aTPartData[TO_Arm].bPartPresent := FALSE;
+								bMoveJackUp := FALSE;
+								sCurrentState.eStep := SP_RunStp36;
+							END_IF
+						SP_RunStp36 :
+							(* Check if jack is Down - Flip back the turn over *)
+							IF bJackIsDown THEN
+								lrTurnOverTargetPos := lrTurnOverIndexPos;
+								eMoveTurnOverAxisCommand := AC_MoveAtAbsPos;
+								sCurrentState.eStep := SP_RunStp37;
+							END_IF
+						SP_RunStp37 :
+							(* Wait until index position is reached *)
+							IF TTurnOverAxis.eCurrentState = AS_InPosition THEN
+								sCurrentState.eStep := SP_RunStp1;
+							END_IF
+					END_CASE
+				END_IF
+			MS_Manual :
+				TManualCmd.TJack.Enable := TRUE;
+				TManualCmd.TTurnOverAxis.Home.Enable := NOT bManInterlock AND (TTurnOverAxis.eCurrentState = AS_InPosition) OR (TTurnOverAxis.eCurrentState = AS_NotHomed);
+				TManualCmd.TTurnOverAxis.MoveBw.Enable := NOT bManInterlock AND (TTurnOverAxis.eCurrentState = AS_InPosition) AND (TTurnOverAxis.lrCurrentPos-lrTurnOverJogStep >= TTurnOverAxis.lrMinPos);
+				TManualCmd.TTurnOverAxis.MoveFw.Enable := NOT bManInterlock AND (TTurnOverAxis.eCurrentState = AS_InPosition) AND (TTurnOverAxis.lrCurrentPos+lrTurnOverJogStep <= TTurnOverAxis.lrMaxPos);
+				TManualCmd.TTurnOverAxisIndexPos.MoveToTeach.Enable := NOT bManInterlock AND (TTurnOverAxis.eCurrentState = AS_InPosition) AND lrTurnOverIndexPos >= TTurnOverAxis.lrMinPos AND lrTurnOverIndexPos <= TTurnOverAxis.lrMaxPos;
+				TManualCmd.TTurnOverAxisFlippedPos.MoveToTeach.Enable := NOT bManInterlock AND (TTurnOverAxis.eCurrentState = AS_InPosition) AND lrTurnOverFlippedPos >= TTurnOverAxis.lrMinPos AND lrTurnOverFlippedPos <= TTurnOverAxis.lrMaxPos;
+				TManualCmd.TTurnOverAxis.CurrentPos := TTurnOverAxis.lrCurrentPos;
+				TManualCmd.TActivateFixVacuum.Enable := TTurnOverAxis.eCurrentState <> AS_Moving AND TTurnOverAxis.eCurrentState <> AS_Stopping AND TTurnOverAxis.eCurrentState <> AS_Homing;
+				TManualCmd.TActivateArmVacuum.Enable := TManualCmd.TActivateFixVacuum.Enable;
+				TManualCmd.TTurnOverAxisIndexPos.TeachedPos := lrTurnOverIndexPos;
+				TManualCmd.TTurnOverAxisFlippedPos.TeachedPos := lrTurnOverFlippedPos;
+				bManInterlockOut := NOT ((TTurnOverAxis.lrCurrentPos <= (lrTurnOverIndexPos+lrSafeTolerance)) AND
+								TTurnOverAxis.bAxisHomed);
+
+				CASE sCurrentState.eStep OF
+					SP_ManualStp0 :
+						TManualCmd.TTurnOverAxis.JogStep := lrTurnOverJogStep;
+						TManualCmd.TTurnOverAxis.MoveBw.Activate := FALSE;
+						TManualCmd.TTurnOverAxis.MoveFw.Activate := FALSE;
+						TManualCmd.TTurnOverAxisIndexPos.MoveToTeach.Activate := FALSE;
+						TManualCmd.TTurnOverAxisIndexPos.Teach := FALSE;
+						TManualCmd.TTurnOverAxisFlippedPos.MoveToTeach.Activate := FALSE;
+						TManualCmd.TTurnOverAxisFlippedPos.Teach := FALSE;
+						TManualCmd.TActivateFixVacuum.Activate := bEnableFixVacuum;
+						TManualCmd.TActivateArmVacuum.Activate := bEnableArmVacuum;
+						TManualCmd.TJack.Activate := bMoveJackUp;
+						TManualCmd.TTurnOverAxis.Home.Activate := FALSE;
+						TManualCmd.TActivateCleaningBlow.Enable := TRUE;
+						TManualCmd.TActivateCleaningBlow.Activate := bActivateCleaningBlow;
+						sCurrentState.eStep := SP_ManualStp1;
+					SP_ManualStp1:
+						IF bStopReq THEN
+							sCurrentState.eStatus := MS_Stopped;
+						ELSE
+							IF (lrTurnOverJogStep <> TManualCmd.TTurnOverAxis.JogStep) THEN
+								lrTurnOverJogStep := TManualCmd.TTurnOverAxis.JogStep;
+							END_IF
+							IF TManualCmd.TTurnOverAxisIndexPos.Teach THEN
+								lrTurnOverIndexPos := TTurnOverAxis.lrCurrentPos;
+								TManualCmd.TTurnOverAxisIndexPos.Teach := FALSE;
+							END_IF
+							IF TManualCmd.TTurnOverAxisIndexPos.MoveToTeach.Activate THEN
+								lrTurnOverTargetPos := TManualCmd.TTurnOverAxisIndexPos.TeachedPos;
+								sCurrentState.eStep := SP_ManualStp10;
+							END_IF
+							IF TManualCmd.TTurnOverAxisFlippedPos.Teach THEN
+								lrTurnOverFlippedPos := TTurnOverAxis.lrCurrentPos;
+								TManualCmd.TTurnOverAxisFlippedPos.Teach := FALSE;
+							END_IF
+							IF TManualCmd.TTurnOverAxisFlippedPos.MoveToTeach.Activate THEN
+								lrTurnOverTargetPos := TManualCmd.TTurnOverAxisFlippedPos.TeachedPos;
+								sCurrentState.eStep := SP_ManualStp10;
+							END_IF
+							IF TManualCmd.TTurnOverAxis.MoveBw.Activate THEN
+								lrTurnOverTargetPos := TTurnOverAxis.lrCurrentPos - lrTurnOverJogStep;
+								sCurrentState.eStep := SP_ManualStp10;
+							END_IF
+							IF TManualCmd.TTurnOverAxis.MoveFw.Activate THEN
+								lrTurnOverTargetPos := TTurnOverAxis.lrCurrentPos + lrTurnOverJogStep;
+								sCurrentState.eStep := SP_ManualStp10;
+							END_IF
+							IF TManualCmd.TTurnOverAxis.Home.Activate AND sCurrentState.eStep = SP_ManualStp1 THEN
+								sCurrentState.eStep := SP_ManualStp20;
+							END_IF
+							bEnableFixVacuum := TManualCmd.TActivateFixVacuum.Activate;
+							bEnableArmVacuum := TManualCmd.TActivateArmVacuum.Activate;
+						END_IF
+					SP_ManualStp10: (* Do the movement *)
+						eMoveTurnOverAxisCommand := AC_MoveAtAbsPos;
+						sCurrentState.eStep := SP_ManualStp11;
+					SP_ManualStp11: (* Wait until position is reached *)
+						CASE TTurnOverAxis.eCurrentState OF
+							AS_InPosition, AS_InError:
+								TManualCmd.TTurnOverAxisIndexPos.MoveToTeach.Activate := FALSE;
+								TManualCmd.TTurnOverAxisFlippedPos.MoveToTeach.Activate := FALSE;
+								TManualCmd.TTurnOverAxis.MoveFw.Activate := FALSE;
+								TManualCmd.TTurnOverAxis.MoveBw.Activate := FALSE;
+								sCurrentState.eStep := SP_ManualStp1;
+						END_CASE
+					SP_ManualStp20 : (* Init turn over axis *)
+						eMoveTurnOverAxisCommand := AC_Home;
+						sCurrentState.eStep := SP_ManualStp21;
+					SP_ManualStp21 : (* Rotate the turn over to go to index position *)
+						CASE TTurnOverAxis.eCurrentState OF
+							AS_InPosition:
+								lrTurnOverTargetPos := lrTurnOverIndexPos;
+								eMoveTurnOverAxisCommand := AC_MoveAtAbsPos;
+								sCurrentState.eStep := SP_ManualStp22;
+							AS_InError:
+								sCurrentState.eStep := SP_ManualStp1;
+								TManualCmd.TTurnOverAxis.Home.Activate := FALSE;
+						END_CASE
+					SP_ManualStp22 : (* Wait until index position is reached *)
+						CASE TTurnOverAxis.eCurrentState OF
+							AS_InPosition, AS_InError:
+								sCurrentState.eStep := SP_ManualStp1;
+								TManualCmd.TTurnOverAxis.Home.Activate := FALSE;
+						END_CASE
+				END_CASE
+				bMoveJackUp := TManualCmd.TJack.Activate;
+				bActivateCleaningBlow := TManualCmd.TActivateCleaningBlow.Activate;
+			MS_Paused:
+				IF bStopReq THEN
+					sCurrentState.eStatus := MS_Ready;
+				END_IF
+		END_CASE
+	MC_Init :
+		sCurrentState.eStep := SP_InitStp1;
+		sCurrentState.eStatus := MS_Init;
+	MC_Run :
+		sCurrentState.eStatus := MS_Running;
+	MC_Manual :
+		sCurrentState.bInitDone := FALSE;
+		sCurrentState.eStatus := MS_Manual;
+		sCurrentState.eStep := SP_ManualStp0;
+	MC_Stop :
+		sCurrentState.eStatus := MS_Stopped;
+END_CASE;
+
+IF bResetErrors THEN
+	sCurrentState.bInError := FALSE;
+END_IF
+
+IF bEnable THEN
+	(* Turn Over Axis *)
+	IF (sCurrentState.eStatus = MS_Manual) THEN
+		lrCurrentTurnOverMoveSpeed := TTurnOverAxis.lrManualSpeed;
+	ELSE
+		lrCurrentTurnOverMoveSpeed := TTurnOverAxis.lrRunningSpeed;
+	END_IF
+	TTurnOverAxis(
+		eCommand		:= eMoveTurnOverAxisCommand,
+		lrTargetPos		:= lrTurnOverTargetPos,
+		lrTargetSpeed	:= lrCurrentTurnOverMoveSpeed,
+		sAxis			:= sTurnOverAxisRef,
+		bResetErrors		:= bResetErrors,
+		bHomeSensor	:= bIndexTurnOver,
+		bPowerIsOn		:= bPowerOn,
+		stServoButton 	:= TManualCmd.TTurnOverAxis.ServoON
+	);
+	
+	eMoveTurnOverAxisCommand := AC_None;
+	bTurnOverAxisError := (TTurnOverAxis.eCurrentState = AS_InError);
+	
+	(* Check Jack Error *)
+	bMoveJackDown := NOT bMoveJackUp;
+	TJack(
+		bJackGoIn	:= bMoveJackDown,
+		bJackGoOut	:= bMoveJackUp,
+		bJackIsIn	:= bJackIsDown,
+		bJackIsOut	:= bJackIsUp,
+		tTimeOut		:= t#2s,
+		bResetErrors	:= bResetErrors,
+		bJackError	=> bJackError
+	 );
+	
+	(* Handle Manipulator Vacuum *)
+	TArmVacuum(
+		bEnableVacuum	:= bEnableArmVacuum,
+		tVacErrorDelay		:= INT_TO_TIME(sVaccumSettings.iErrorDelay),
+		tBlowingTime			:= INT_TO_TIME(sVaccumSettings.iBlowing),
+		tWaitVacuumOK		:= INT_TO_TIME(sVaccumSettings.iWaitWhenVacuumOk),
+		bReset			:= bResetErrors,
+		bVacuumOK		:= bArmVacuumOk AND bEnableArmVacuum,
+		bDisableVacuumChecking := bDisableArmVacuumChecking,
+		bVacuumError	=> bArmVacuumError,
+		bVacuumOn		=> bActivateArmVacuum,
+		bBlowOn			=> bActivateArmBlowing,
+	);
+	
+	(* Handle Laying Vacuum *)
+	TFixVacuum(
+		bEnableVacuum	:= bEnableFixVacuum,
+		tVacErrorDelay		:= INT_TO_TIME(sVaccumSettings.iErrorDelay),
+		tBlowingTime			:= INT_TO_TIME(sVaccumSettings.iBlowing),
+		tWaitVacuumOK		:= INT_TO_TIME(sVaccumSettings.iWaitWhenVacuumOk),
+		bReset			:= bResetErrors,
+		bVacuumOK		:= bFixVacuumOk,
+		bDisableVacuumChecking := bDisableFixVacuumChecking,
+		bVacuumError	=> bFixVacuumError,
+		bVacuumOn		=> bActivateFixVacuum,
+		bBlowOn			=> bActivateFixBlowing,
+	);
+END_IF
+
+IF NOT bPowerOn OR bTurnOverAxisError OR bJackError OR bArmVacuumError OR bFixVacuumError THEN
+	sCurrentState.bInError := TRUE;
+	IF (sCurrentState.eStatus <> MS_Manual) AND (sCurrentState.eStatus <> MS_Stopped) AND (sCurrentState.eStatus <> MS_Init) THEN
+		sCurrentState.eStatus := MS_Ready;
+	END_IF
+END_IF
+
+IF (NOT bPowerOn OR bTurnOverAxisError) THEN
+	sCurrentState.bInitDone := FALSE;
+	IF (sCurrentState.eStatus <> MS_Manual) THEN
+		sCurrentState.eStatus := MS_Stopped;
+	END_IF
+END_IF
+
+IF sCurrentState.eStatus <> MS_Running AND sCurrentState.eStatus <> MS_Manual  THEN
+	bActivateCleaningBlow := FALSE;
+END_IF
+
+sCurrentState.bInterlocked := bManInterlock AND  (sCurrentState.eStatus = MS_Manual);
+bModuleError := sCurrentState.bInError;
+sCurrentState.bRunning := (sCurrentState.eStatus = MS_Running);
+IF (sCurrentState.eStatus <> MS_Running) THEN eRunStatus := RS_NotRunning; END_IF]]></ST>
+    </Implementation>
+    <LineIds Name="TurnOverHdl">
+      <LineId Id="78" Count="83" />
+      <LineId Id="564" Count="16" />
+      <LineId Id="563" Count="0" />
+      <LineId Id="562" Count="0" />
+      <LineId Id="581" Count="3" />
+      <LineId Id="179" Count="305" />
+    </LineIds>
+  </POU>
+</TcPlcObject>

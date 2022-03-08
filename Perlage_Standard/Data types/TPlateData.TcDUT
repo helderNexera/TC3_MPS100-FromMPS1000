@@ -1,0 +1,17 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<TcPlcObject Version="1.1.0.1" ProductVersion="3.1.4022.12">
+  <DUT Name="TPlateData" Id="{5a0ee4e4-130d-4c75-b9bf-60ea4a754882}">
+    <Declaration><![CDATA[{attribute 'pack_mode' := '1'}
+TYPE TPlateData :
+STRUCT
+	lrHeight					: LREAL;
+	lrEdge					: LREAL;
+	alrPartOnPlate			: ARRAY[0..C_MAX_NB_OF_PARTS_ON_PLATE] OF TPositionXY;
+	iNbPartOnPlate			: INT;
+	alrTakePlatePos			: TPositionXY;
+	lrRejectCorrectionY		: LREAL;
+	bUseVisionForDrop		: BOOL;
+END_STRUCT
+END_TYPE]]></Declaration>
+  </DUT>
+</TcPlcObject>

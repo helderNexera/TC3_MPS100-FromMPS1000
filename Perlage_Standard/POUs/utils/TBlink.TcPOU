@@ -1,0 +1,39 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<TcPlcObject Version="1.1.0.1" ProductVersion="3.1.4022.12">
+  <POU Name="TBlink" Id="{06032867-fa5c-467b-a394-3a615058b6c3}" SpecialFunc="None">
+    <Declaration><![CDATA[FUNCTION_BLOCK TBlink
+VAR_INPUT
+	bEnable			: BOOL;
+	tOnPeriod		: TIME		:= t#500ms;
+	tOffPeriod		: TIME		:= t#500ms;
+END_VAR
+VAR_OUTPUT
+	bBlink			: BOOL;
+END_VAR
+VAR
+	TBlinker			: TON;
+(*	bBlinkOn			: BOOL;*)
+	CurrentPeriod		: TIME		:= t#10ms;
+END_VAR]]></Declaration>
+    <Implementation>
+      <ST><![CDATA[IF bEnable THEN
+	TBlinker(IN := TRUE,PT := CurrentPeriod);
+ELSE
+	TBlinker(IN := FALSE);
+END_IF
+
+IF bBlink AND TBlinker.Q THEN
+	bBlink := FALSE;
+	CurrentPeriod := tOffPeriod;
+	TBlinker(IN := FALSE);
+ELSIF NOT bBlink AND TBlinker.Q THEN
+	bBlink := TRUE;
+	CurrentPeriod := tOnPeriod;
+	TBlinker(IN := FALSE);
+END_IF]]></ST>
+    </Implementation>
+    <LineIds Name="TBlink">
+      <LineId Id="14" Count="14" />
+    </LineIds>
+  </POU>
+</TcPlcObject>

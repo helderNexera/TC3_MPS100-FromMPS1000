@@ -1,0 +1,14 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<TcPlcObject Version="1.1.0.1" ProductVersion="3.1.4022.12">
+  <DUT Name="TManSharpen" Id="{6e74dc06-e6da-44e1-94d8-572ffcdf9af1}">
+    <Declaration><![CDATA[{attribute 'pack_mode' := '1'}
+TYPE TManSharpen :
+STRUCT
+	TSharpenAxis				: TManDrive;
+	TMove2NextTapePos			: TManButton;
+	bTapeNotEmpty				: BOOL;
+	lrStep						: LREAL;
+END_STRUCT
+END_TYPE]]></Declaration>
+  </DUT>
+</TcPlcObject>

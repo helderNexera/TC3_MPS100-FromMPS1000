@@ -1,0 +1,14 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<TcPlcObject Version="1.1.0.1" ProductVersion="3.1.4022.12">
+  <DUT Name="TModuleStatus" Id="{51d03092-fd8d-486a-bae7-220724c7be89}">
+    <Declaration><![CDATA[TYPE TModuleStatus :
+	(	MS_Stopped:=0,
+		MS_Init,
+		MS_Running,
+		MS_Ready,
+		MS_Manual,
+		MS_Paused
+	);
+END_TYPE]]></Declaration>
+  </DUT>
+</TcPlcObject>

@@ -1,0 +1,13 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<TcPlcObject Version="1.1.0.1" ProductVersion="3.1.4022.12">
+  <DUT Name="TPositionXYTheta" Id="{82e4e827-5cc5-44f5-9fe5-48de8bd564c2}">
+    <Declaration><![CDATA[{attribute 'pack_mode' := '1'}
+TYPE TPositionXYTheta :
+STRUCT
+	lrX		: LREAL;
+	lrY		: LREAL;
+	lrTheta	: LREAL;
+END_STRUCT
+END_TYPE]]></Declaration>
+  </DUT>
+</TcPlcObject>

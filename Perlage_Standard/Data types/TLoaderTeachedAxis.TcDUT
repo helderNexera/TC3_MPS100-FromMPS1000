@@ -1,0 +1,13 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<TcPlcObject Version="1.1.0.1" ProductVersion="3.1.4022.12">
+  <DUT Name="TLoaderTeachedAxis" Id="{54b6b972-5ae6-404a-950d-9dc1f4ea97f2}">
+    <Declaration><![CDATA[TYPE TLoaderTeachedAxis :
+	(
+		LTA_X := 0,
+		LTA_Y,
+		LTA_Z,
+		LTA_THETA
+	);
+END_TYPE]]></Declaration>
+  </DUT>
+</TcPlcObject>

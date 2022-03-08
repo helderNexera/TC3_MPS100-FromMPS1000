@@ -1,0 +1,15 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<TcPlcObject Version="1.1.0.1" ProductVersion="3.1.4022.12">
+  <DUT Name="TAutoSampling" Id="{9733da22-a149-4225-b8fe-78d3079dea0f}">
+    <Declaration><![CDATA[{attribute 'pack_mode' := '1'}
+TYPE TAutoSampling :
+STRUCT
+	bEnable			: BOOL;
+	iPeriod			: INT;
+	iBatchSize		: INT;
+	iPeriodCnt		: INT;
+	iBatchCnt		: INT;
+END_STRUCT
+END_TYPE]]></Declaration>
+  </DUT>
+</TcPlcObject>

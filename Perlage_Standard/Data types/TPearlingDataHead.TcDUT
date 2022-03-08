@@ -1,0 +1,19 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<TcPlcObject Version="1.1.0.1" ProductVersion="3.1.4022.12">
+  <DUT Name="TPearlingDataHead" Id="{d560c2a9-2a1f-41a2-a15d-bd65ae3f17b3}">
+    <Declaration><![CDATA[{attribute 'pack_mode' := '1'}
+TYPE TPearlingDataHead :
+STRUCT
+	aDataPerlage		: ARRAY[0..C_MAX_NB_OF_PEARLS] OF TPearlsTable;
+	nNbOfPearls			: UINT;
+	lrSecurityZ			: LREAL;
+	iDispersionXY		: INT;
+	iWeight				: INT;
+	iDispersionZ			: INT;
+	iSharpenFreq			: INT;
+	iMCRSpeed			: INT;
+	iPearlingTime		: INT;
+END_STRUCT
+END_TYPE]]></Declaration>
+  </DUT>
+</TcPlcObject>

@@ -1,0 +1,8 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<TcPlcObject Version="1.1.0.1" ProductVersion="3.1.4022.12">
+  <DUT Name="TTransferIndex" Id="{0c80fbdd-108b-4184-9476-11d2c7125670}">
+    <Declaration><![CDATA[TYPE TTransferIndex :
+	(TI_Loader:=0,TI_LoaderTableL1,TI_LoaderTableL2,TI_LoaderTableR1,TI_LoaderTableR2,TI_PearlingTableL,TI_PearlingTableR,TI_PearlingTable, TI_LoaderTurnOver,TI_END);
+END_TYPE]]></Declaration>
+  </DUT>
+</TcPlcObject>

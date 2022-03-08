@@ -1,0 +1,25 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<TcPlcObject Version="1.1.0.1" ProductVersion="3.1.4022.12">
+  <DUT Name="TPartData" Id="{bd9bda18-989b-4967-a35e-95adc822e53a}">
+    <Declaration><![CDATA[{attribute 'pack_mode' := '1'}
+TYPE TPartData :
+STRUCT
+	bPartPresent			: BOOL;
+	ePartSide			: TPearlingSide;
+	bToReject			: BOOL;
+	bSample				: BOOL;
+	abHasPearls			: ARRAY[0..1,0..1] OF BOOL;			(* 1st index is left or right spindle, 2nd is top/bottom *)
+	abPearlingDone		: ARRAY[0..1,0..1] OF BOOL;
+	anLastPearlIndexDone	: ARRAY[0..1,0..1] OF UINT;
+	abBadPearling		: ARRAY[0..1,0..1] OF BOOL;
+	dwPlateInQRCode		: DWORD;
+	iPlateInPos			: INT;
+	dwPlateOutQRCode	: DWORD;
+	iPlateOutPos			: INT;
+	dwProductionTime	: DWORD;
+	dwProductionInTime	: DWORD;
+	dwProductionOutTime	: DWORD;
+END_STRUCT
+END_TYPE]]></Declaration>
+  </DUT>
+</TcPlcObject>

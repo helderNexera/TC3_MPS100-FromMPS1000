@@ -1,0 +1,28 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<TcPlcObject Version="1.1.0.1" ProductVersion="3.1.4022.18">
+  <DUT Name="TManTable" Id="{13ee2c79-3106-4e6c-8591-99e777830eb7}">
+    <Declaration><![CDATA[{attribute 'pack_mode' := '1'}
+TYPE TManTable :
+STRUCT
+	TAxisTable						: TManDrive;
+	TAxisTableLoading12Pos			: TManDrivePos;
+	TAxisTableLoading34Pos			: TManDrivePos;
+	TAxisBrush						: TManDrive;
+	aTAxisBrushParkPos				:  ARRAY[0..1] OF  TManDrivePos;
+	aTAxisBrushWorkPos				:  ARRAY[0..1] OF  TManDrivePos;
+	TAspirationDown					: TManButton;
+	TIndexTable						: TManButton;
+	TPlate1Vacuum					: TManButton;
+	TPlate2Vacuum					: TManButton;
+	TPlate3Vacuum					: TManButton;
+	TPlate4Vacuum					: TManButton;
+	alrVaccumValue					: ARRAY[0..3] OF  LREAL;
+	alrVaccumThershold				: ARRAY[0..3] OF  LREAL;
+	TAspirationBrush				: TManButton;
+	TCleanBrushDown					: TManButton;
+END_STRUCT
+END_TYPE
+
+]]></Declaration>
+  </DUT>
+</TcPlcObject>

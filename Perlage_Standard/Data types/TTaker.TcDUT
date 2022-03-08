@@ -1,0 +1,13 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<TcPlcObject Version="1.1.0.1" ProductVersion="3.1.4022.12">
+  <DUT Name="TTaker" Id="{30325c2d-56c0-417b-96d7-22007b27a10c}">
+    <Declaration><![CDATA[{attribute 'pack_mode' := '1'}
+TYPE TTaker :
+	STRUCT
+		bReadyToTake	: BOOL;		(* The taker is ready to take the part *)
+		bHasTaken		: BOOL;		(* Part has been taken *)
+		bHasNotTaken	: BOOL;		(* Part has not been taken *)
+	END_STRUCT
+END_TYPE]]></Declaration>
+  </DUT>
+</TcPlcObject>

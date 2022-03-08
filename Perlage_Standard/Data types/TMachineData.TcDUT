@@ -1,0 +1,57 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<TcPlcObject Version="1.1.0.1" ProductVersion="3.1.4022.18">
+  <DUT Name="TMachineData" Id="{14ae0924-ca3c-4bf7-bca2-85e29d9ebe77}">
+    <Declaration><![CDATA[{attribute 'pack_mode' := '1'}
+TYPE TMachineData :
+STRUCT
+	bReadyForChangeJob		: BOOL;
+	bMachineInitDone			: BOOL;
+	bResetErrors				: BOOL;
+	bClearRates				: BOOL;
+	bNewJob				: BOOL;
+	bCloseJob				: BOOL;
+	bPurgeJob				: BOOL;
+	bMondemaMode			: BOOL;
+	abErrorsTable			: ARRAY[0..C_MAX_NB_OF_ERRORS] OF BOOL;
+	abValErrorsTable			: ARRAY[0..C_MAX_NB_OF_ERRORS] OF BOOL;
+	eCurrentMode			: TMachineMode := MM_Stopped;
+	acPartName				: STRING(8);
+	iMajorVersion				: INT;
+	iMinorVersion				: INT;
+	sModeMask				: TMachineModeMask;
+	sModeReq				: TMachineModeMask;
+	sModLoader				: TModuleData;
+	sModTable				: TModuleData;
+	sModPearling			: TModuleData;
+	sModSharpen			: TModuleData;
+	sModTurnOver			: TModuleData;
+	sModBarrel				: TModuleData;
+	sModLift1				: TModuleData;
+	sModLift2				: TModuleData;
+	sModReject				: TModuleData;
+	sModVision				: TModuleData;
+	sModUtilities				: TModuleData;
+	sMachineOpt				: TMachineOptions;
+	sProdData				: TProductionlot;
+	sProdStats				: TProductionStats;
+	sPartDataForLog			: TDataLog;
+	sMachineManualCmd		: TMachineManual;
+	sOperatorReq			: TOperatorReq;
+	asStickData				: ARRAY[0..1] OF TStickDataMMI;
+	asPearlsData				: ARRAY[0..1] OF TMMIPearlData;
+	sStickDataShared			: TStickDataMMIShared;
+	bEmergencyStop			: BOOL;
+	bDoorsPearling			: BOOL;
+	bDoorsLoader			: BOOL;
+	bSavePersistent			: BOOL;
+	eManagerRunStep		: TModuleSteps;
+	sDashboardCmd			: TDashboardCmd;
+	bSimPearling				: BOOL;
+	asProbingLog			: ARRAY[0..1] OF  TProbingLog;
+	sProductionCmd			: TProductionCmd;
+	dwStartJobElapsedTime	: DWORD;
+	sCounter					: TCounter;
+END_STRUCT
+END_TYPE]]></Declaration>
+  </DUT>
+</TcPlcObject>

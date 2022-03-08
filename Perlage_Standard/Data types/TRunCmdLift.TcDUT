@@ -1,0 +1,13 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<TcPlcObject Version="1.1.0.1" ProductVersion="3.1.4022.12">
+  <DUT Name="TRunCmdLift" Id="{0fcf46a1-3aec-42dc-83f6-3d66c4f0c30b}">
+    <Declaration><![CDATA[TYPE TRunCmdLift :
+	(
+		RCL_None,
+		RCL_MoveToPlate,
+		RCL_MoveToLoadPlate,
+		RCL_MoveToOpenDrawer
+	);
+END_TYPE]]></Declaration>
+  </DUT>
+</TcPlcObject>

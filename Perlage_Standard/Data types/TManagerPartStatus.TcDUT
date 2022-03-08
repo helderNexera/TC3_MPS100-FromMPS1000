@@ -1,0 +1,13 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<TcPlcObject Version="1.1.0.1" ProductVersion="3.1.4022.12">
+  <DUT Name="TManagerPartStatus" Id="{b9cb790f-48cb-4d7b-90b5-b04263852bd5}">
+    <Declaration><![CDATA[TYPE TManagerPartStatus :
+	(
+		MPS_NoPart,
+		MPS_NeedPearling,
+		MPS_ReadyToMove,
+		MPS_PartBusy
+	);
+END_TYPE]]></Declaration>
+  </DUT>
+</TcPlcObject>

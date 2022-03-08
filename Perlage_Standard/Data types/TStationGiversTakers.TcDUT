@@ -1,0 +1,30 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<TcPlcObject Version="1.1.0.1" ProductVersion="3.1.4022.12">
+  <DUT Name="TStationGiversTakers" Id="{eb8f5a27-9244-40ff-bc11-bb87f3a7b996}">
+    <Declaration><![CDATA[{attribute 'pack_mode' := '1'}
+TYPE TStationGiversTakers :
+	STRUCT
+		(* For  loader *)
+		sLoaderTurnOverTakerIn		: TTaker;
+		sLoaderTurnOverGiverIn		: TGiver;
+		sLoaderTurnOverTakerOut		: TTaker;
+		sLoaderTurnOverGiverOut		: TGiver;
+
+		sLoaderTableTakerIn			: TTaker;
+		sLoaderTableGiverIn			: TGiver;
+		sLoaderTableTakerOut		: TTaker;
+		sLoaderTableGiverOut			: TGiver;
+
+
+		(* For pearling station *)
+		sPearlingTakeFromBarrel		:TTaker;
+
+		(* For  barrel *)
+		sBarrelGiveToPearling			:TGiver;
+
+	END_STRUCT
+END_TYPE
+
+]]></Declaration>
+  </DUT>
+</TcPlcObject>

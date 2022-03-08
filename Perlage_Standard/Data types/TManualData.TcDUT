@@ -1,0 +1,23 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<TcPlcObject Version="1.1.0.1" ProductVersion="3.1.4022.12">
+  <DUT Name="TManualData" Id="{15c9b646-b57d-47c9-988a-f0e8486b7692}">
+    <Declaration><![CDATA[{attribute 'pack_mode' := '1'}
+TYPE TManualData :
+STRUCT
+	TLoaderManual				: TManLoader;
+	TTableManual				: TManTable;
+	TPearlingManual				: TManPearling;
+	TSharpenManual				: TManSharpen;
+	TTurnOverManual				: TManTurnOver;
+	TBarrelManual				: TManBarrel;
+	TLift1Manual					: TManLift;
+	TLift2Manual					: TManLift;
+	TRejectManual				: TManReject;
+	TVisionManual				: TManVision;
+	TUtilitiesManual				: TManUtilities;
+	sVacuumSettingsMMI			: TVacuumSettingsMMI;
+END_STRUCT
+END_TYPE
+]]></Declaration>
+  </DUT>
+</TcPlcObject>

@@ -1,0 +1,12 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<TcPlcObject Version="1.1.0.1" ProductVersion="3.1.4022.12">
+  <DUT Name="TManReject" Id="{83ae5f8e-e31a-4ea7-966e-ab152cf042d5}">
+    <Declaration><![CDATA[{attribute 'pack_mode' := '1'}
+TYPE TManReject :
+	STRUCT
+		bDrawerInPos 			: BOOL;
+		bPlateInPos 				: BOOL;
+	END_STRUCT
+END_TYPE]]></Declaration>
+  </DUT>
+</TcPlcObject>

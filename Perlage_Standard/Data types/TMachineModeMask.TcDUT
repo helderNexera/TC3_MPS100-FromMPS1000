@@ -1,0 +1,17 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<TcPlcObject Version="1.1.0.1" ProductVersion="3.1.4022.12">
+  <DUT Name="TMachineModeMask" Id="{943a361d-0d31-4993-b8b8-c2df2b42b8be}">
+    <Declaration><![CDATA[{attribute 'pack_mode' := '1'}
+TYPE TMachineModeMask :
+STRUCT
+	bStop			: BOOL;
+	bInit				: BOOL;
+	bRun			: BOOL;
+	bManual			: BOOL;
+	bPurge			: BOOL;
+	bPause			: BOOL;
+	bDashboard		: BOOL;
+END_STRUCT
+END_TYPE]]></Declaration>
+  </DUT>
+</TcPlcObject>

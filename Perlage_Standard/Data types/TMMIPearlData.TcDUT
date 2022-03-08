@@ -1,0 +1,24 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<TcPlcObject Version="1.1.0.1" ProductVersion="3.1.4022.12">
+  <DUT Name="TMMIPearlData" Id="{72c4004f-9611-4ac2-a498-8c7b5fbe1d30}">
+    <Declaration><![CDATA[{attribute 'pack_mode' := '1'}
+TYPE TMMIPearlData :
+STRUCT
+	bNewPearl			: BOOL;
+	bNewPart			: BOOL;
+	iPearlNb				: INT;
+	iRate				: INT;
+	bPearlingTop			: BOOL;
+	lrPearlingCalcPos		: LREAL;
+	lrPearlingMeasurePos	: LREAL;
+	lrDeltaCurrent			: LREAL;
+	lrCorrectionMCR		: LREAL;
+	lrDispersion			: LREAL;
+	lrSensorProbePos		: LREAL;
+	lrSensorPearlPos		: LREAL;
+	lrDeltaWeight			: LREAL;
+	iVacuumFlow				: INT;
+END_STRUCT
+END_TYPE]]></Declaration>
+  </DUT>
+</TcPlcObject>

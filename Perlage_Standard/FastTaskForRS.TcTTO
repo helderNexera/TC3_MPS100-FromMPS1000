@@ -1,0 +1,16 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<TcPlcObject Version="1.1.0.1" ProductVersion="3.1.4022.12">
+  <Task Name="FastTaskForRS" Id="{edea3cd6-04bf-47b5-9c4c-397adf17fe9e}">
+    <!--CycleTime in micro seconds.-->
+    <CycleTime>2000</CycleTime>
+    <Priority>21</Priority>
+    <PouCall>
+      <Name>BG_Serial</Name>
+    </PouCall>
+    <TaskFBGuid>{245501c5-ad8c-44f1-8a93-36f06110ddd7}</TaskFBGuid>
+    <Fb_init>{43c45a76-e5d9-49e3-b2e7-6a6953b53c4a}</Fb_init>
+    <Fb_exit>{d430c04e-f124-4e36-8223-ca705663919f}</Fb_exit>
+    <CycleUpdate>{98c4c8df-b204-460b-89ca-dbd8dc8c6631}</CycleUpdate>
+    <PostCycleUpdate>{0d94b9b8-8e9c-4cac-9c59-8500d2c593a8}</PostCycleUpdate>
+  </Task>
+</TcPlcObject>

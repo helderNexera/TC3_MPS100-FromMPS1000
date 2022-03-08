@@ -1,0 +1,21 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<TcPlcObject Version="1.1.0.1" ProductVersion="3.1.4022.12">
+  <DUT Name="TDashboardCmd" Id="{17d631a5-0462-4047-8322-635da743e99a}">
+    <Declaration><![CDATA[{attribute 'pack_mode' := '1'}
+TYPE TDashboardCmd :
+STRUCT
+		TPearling				: TManButton;
+		TLoaderEndOfRecipe		: TManButton;
+		TTableTurn				: TManButton;
+		TLoaderScanPlateLift1		: TManButton;
+		TLoaderScanPlateLift2		: TManButton;
+		TLoaderScanPlateReject	: TManButton;
+		TPickPlace				: TManButton;
+		iScanModel				: INT;
+		iMaxScanModel			: INT;
+		aiScanPlateOK			: ARRAY[0..2] OF INT;
+		aiScanPlateTotal			: ARRAY[0..2] OF INT;
+END_STRUCT
+END_TYPE]]></Declaration>
+  </DUT>
+</TcPlcObject>

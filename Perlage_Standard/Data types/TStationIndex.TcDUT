@@ -1,0 +1,8 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<TcPlcObject Version="1.1.0.1" ProductVersion="3.1.4022.12">
+  <DUT Name="TStationIndex" Id="{488cfb7e-bbe4-43f6-a0cf-e4eb53004530}">
+    <Declaration><![CDATA[TYPE TStationIndex :
+	(SI_LeftLoader:=0, SI_RightLoader,SI_LeftTable,SI_LeftPearling,SI_RightTable,SI_RightPearling,SI_TurnOver,SI_LeftSharpen,SI_RightSharpen,SI_LeftBarrel,SI_RightBarrel,SI_Other);
+END_TYPE]]></Declaration>
+  </DUT>
+</TcPlcObject>

@@ -1,0 +1,14 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<TcPlcObject Version="1.1.0.1" ProductVersion="3.1.4022.12">
+  <DUT Name="TStickDataMMI" Id="{5680480d-e308-489d-97a0-365254823ae7}">
+    <Declaration><![CDATA[{attribute 'pack_mode' := '1'}
+TYPE TStickDataMMI :
+STRUCT
+	iCompenseWeight				: INT;
+	lrMCRCorrectionStep			: LREAL;
+	lrMA2MMFactor				: LREAL;
+	lrMCRRatio					: LREAL;
+END_STRUCT
+END_TYPE]]></Declaration>
+  </DUT>
+</TcPlcObject>

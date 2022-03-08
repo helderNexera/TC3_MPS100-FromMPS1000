@@ -1,0 +1,223 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<TcPlcObject Version="1.1.0.1" ProductVersion="3.1.4022.12">
+  <POU Name="ManagerDashboard" Id="{25420073-0766-43ab-8a90-7dc65687e125}" SpecialFunc="None">
+    <Declaration><![CDATA[FUNCTION_BLOCK ManagerDashboard
+VAR_INPUT
+	sConfigFileData			: TConfigFileData;
+(*	bFirstCycle				: BOOL;*)
+	bExecute				: BOOL;
+END_VAR
+VAR_OUTPUT
+END_VAR
+VAR_IN_OUT
+	bDoChangeTool			: BOOL;
+	sRunData				: TRunData;
+	sCmd					: TDashboardCmd;
+END_VAR
+VAR
+	eManagerStep			: TModuleSteps := SP_RunStp0;
+	bLastExecute				: BOOL;
+	iCurrentLift				: INT;
+END_VAR]]></Declaration>
+    <Implementation>
+      <ST><![CDATA[sCmd.iMaxScanModel := sRunData.TDataVision.iMaxModel;
+IF NOT bExecute THEN
+	sCmd.TLoaderEndOfRecipe.Enable := FALSE;
+	sCmd.TLoaderScanPlateLift1.Enable := FALSE;
+	sCmd.TLoaderScanPlateLift2.Enable := FALSE;
+	sCmd.TLoaderScanPlateReject.Enable := FALSE;
+	sCmd.TPickPlace.Enable := FALSE;
+	sCmd.TTableTurn.Enable := FALSE;
+	sCmd.TPearling.Enable := FALSE;
+	sCmd.TLoaderEndOfRecipe.Activate := FALSE;
+	sCmd.TLoaderScanPlateLift1.Activate := FALSE;
+	sCmd.TLoaderScanPlateLift2.Activate := FALSE;
+	sCmd.TLoaderScanPlateReject.Activate := FALSE;
+	sCmd.TPickPlace.Activate := FALSE;
+	sCmd.TTableTurn.Activate := FALSE;
+	sCmd.TPearling.Activate := FALSE;
+	bLastExecute := FALSE;
+ELSE
+	sRunData.eCmdTurnOver := RCTO_None;
+	sRunData.eCmdTable := RCT_None;
+	sRunData.eCmdLoader := RCLo_None;
+	sRunData.eCmdPearling := RCP_None;
+	IF bLastExecute = FALSE THEN
+		bLastExecute := TRUE;
+		eManagerStep := SP_RunStp0;
+	END_IF
+	sCmd.TLoaderEndOfRecipe.Enable := sRunData.sStatusLoader = RS_WaitRequest AND eManagerStep = SP_RunStp1;
+	sCmd.TLoaderScanPlateLift1.Enable := sRunData.sStatusLoader = RS_WaitRequest AND eManagerStep = SP_RunStp1;
+	sCmd.TLoaderScanPlateLift2.Enable := sRunData.sStatusLoader = RS_WaitRequest AND eManagerStep = SP_RunStp1;
+	sCmd.TLoaderScanPlateReject.Enable := sRunData.sStatusLoader = RS_WaitRequest AND eManagerStep = SP_RunStp1;
+	sCmd.TPickPlace.Enable := (sRunData.sStatusLoader = RS_WaitRequest AND sRunData.sStatusTable = RS_WaitRequest AND eManagerStep = SP_RunStp1) OR (eManagerStep >= SP_RunStp30 AND eManagerStep <= SP_RunStp49);
+	sCmd.TTableTurn.Enable := sRunData.sStatusLoader = RS_WaitRequest AND sRunData.sStatusTable = RS_WaitRequest AND eManagerStep = SP_RunStp1;
+	sCmd.TPearling.Enable := sRunData.sStatusPearling = RS_WaitRequest AND eManagerStep = SP_RunStp1;;
+	CASE eManagerStep OF
+		SP_RunStp0:
+			sCmd.TLoaderEndOfRecipe.Activate := FALSE;
+			sCmd.TLoaderScanPlateLift1.Activate := FALSE;
+			sCmd.TLoaderScanPlateLift2.Activate := FALSE;
+			sCmd.TLoaderScanPlateReject.Activate := FALSE;
+			sCmd.TPickPlace.Activate := FALSE;
+			sCmd.TTableTurn.Activate := FALSE;
+			sCmd.TPearling.Activate := FALSE;
+			eManagerStep := SP_RunStp1;
+		SP_RunStp1:
+			IF sCmd.TLoaderEndOfRecipe.Activate THEN
+				sCmd.TLoaderEndOfRecipe.Activate := FALSE;
+				sRunData.eCmdLoader := RCLo_EndOfRecipe;
+				eManagerStep := SP_RunStp10;
+			END_IF
+			IF sCmd.TLoaderScanPlateLift1.Activate THEN
+				sCmd.TLoaderScanPlateLift1.Activate := FALSE;
+				sRunData.TDataLoader.eModule := LMP_Lift1;
+				sRunData.TDataLoader.iScanModel := sCmd.iScanModel;
+				sRunData.eCmdLoader := RCLo_ScanPlate;
+				iCurrentLift := 0;
+				eManagerStep := SP_RunStp5;
+			END_IF
+			IF sCmd.TLoaderScanPlateLift2.Activate THEN
+				sCmd.TLoaderScanPlateLift2.Activate := FALSE;
+				sRunData.TDataLoader.eModule := LMP_Lift2;
+				sRunData.TDataLoader.iScanModel := sCmd.iScanModel;
+				sRunData.eCmdLoader := RCLo_ScanPlate;
+				iCurrentLift := 1;
+				eManagerStep := SP_RunStp5;
+			END_IF
+			IF sCmd.TLoaderScanPlateReject.Activate THEN
+				sCmd.TLoaderScanPlateReject.Activate := FALSE;
+				sRunData.TDataLoader.eModule := LMP_Reject;
+				sRunData.TDataLoader.iScanModel := sCmd.iScanModel;
+				sRunData.eCmdLoader := RCLo_ScanPlate;
+				iCurrentLift := 2;
+				eManagerStep := SP_RunStp5;
+			END_IF
+			IF sCmd.TTableTurn.Activate THEN
+				sCmd.TTableTurn.Activate := FALSE;
+				eManagerStep := SP_RunStp20;
+			END_IF
+			IF sCmd.TPickPlace.Activate THEN
+				eManagerStep := SP_RunStp30;
+			END_IF
+			IF sCmd.TPearling.Activate OR bDoChangeTool THEN
+				bDoChangeTool := TRUE;
+				sCmd.TPearling.Activate := FALSE;
+				sRunData.eCmdPearling := RCP_ChangeChuck;
+				eManagerStep := SP_RunStp50;
+			END_IF
+		SP_RunStp5:
+			(* Update scan data *)
+			sCmd.aiScanPlateOK[iCurrentLift] := sRunData.TDataLoader.iCurrentScanOK;
+			sCmd.aiScanPlateTotal[iCurrentLift] := sRunData.TDataLoader.iCurrentScanTotal;
+			IF sRunData.sStatusLoader = RS_WaitRequest THEN
+				eManagerStep := SP_RunStp1;
+			END_IF
+		SP_RunStp10:
+			IF sRunData.sStatusLoader = RS_WaitRequest THEN
+				eManagerStep := SP_RunStp1;
+			END_IF
+		SP_RunStp20:
+			sRunData.eCmdLoader := RCLo_MoveToSafe;
+			eManagerStep := SP_RunStp21;
+		SP_RunStp21:
+			IF sRunData.sStatusLoader = RS_WaitRequest THEN
+				sRunData.eCmdTable := RCT_Turn;
+				eManagerStep := SP_RunStp22;
+			END_IF
+		SP_RunStp22:
+			IF sRunData.sStatusLoader = RS_WaitRequest AND  sRunData.sStatusTable = RS_WaitRequest THEN
+				eManagerStep := SP_RunStp1;
+			END_IF
+		SP_RunStp30: (* Unloading part on layering 0 *)
+			IF NOT sCmd.TPickPlace.Activate THEN
+				eManagerStep := SP_RunStp1;(* End *)
+			ELSIF sRunData.TDataTable.aTPartData[0,0,sRunData.TDataTable.eTableSide].bPartPresent THEN
+				eManagerStep := SP_RunStp31;
+			ELSE
+				eManagerStep := SP_RunStp40;(* Skip *)
+			END_IF
+		SP_RunStp31:
+			sRunData.TDataLoader.eModule := LMP_Table;
+			sRunData.TDataLoader.eTaker := LH_Head1;
+			sRunData.TDataLoader.iLayringPos := 0;
+			sRunData.TDataLoader.iLayringOffsetPos := 0;
+			sRunData.eCmdLoader := RCLo_PrepareTakePart;
+			eManagerStep := SP_RunStp32;
+		SP_RunStp32:
+			IF sRunData.sStatusLoader = RS_WaitRequest THEN
+				sRunData.eCmdLoader := RCLo_TakePart;
+				sRunData.TDataTable.iGiveTakeLayeringPosition := sRunData.TDataLoader.iLayringPos;
+				sRunData.TDataTable.iGiveTakeLayeringOffsetPosition := sRunData.TDataLoader.iLayringOffsetPos;
+				sRunData.eCmdTable := RCT_GivePart;
+				eManagerStep := SP_RunStp33;
+			END_IF
+		SP_RunStp33:
+			IF sRunData.sStatusLoader = RS_WaitRequest AND  sRunData.sStatusTable = RS_WaitRequest  THEN
+				sRunData.TDataLoader.eModule := LMP_Lift2;
+				sRunData.eCmdLoader := RCLo_PrepareDropPart;
+				eManagerStep := SP_RunStp35;
+			END_IF
+		SP_RunStp35:
+			IF sRunData.sStatusLoader = RS_WaitRequest THEN
+				sRunData.eCmdLoader := RCLo_GivePart;
+				eManagerStep := SP_RunStp36;
+			END_IF
+		SP_RunStp36:
+			IF sRunData.sStatusLoader = RS_WaitRequest THEN
+				eManagerStep := SP_RunStp40;
+			END_IF
+		SP_RunStp40: (* Load layering 1 *)
+			IF NOT sCmd.TPickPlace.Activate THEN
+				eManagerStep := SP_RunStp1;(* End *)
+			ELSIF NOT sRunData.TDataTable.aTPartData[0,0,sRunData.TDataTable.eTableSide].bPartPresent THEN
+				sRunData.TDataLoader.eModule := LMP_Lift1;
+				sRunData.TDataLoader.eTaker := LH_Head1;
+				sRunData.eCmdLoader := RCLo_PrepareTakePart;
+				eManagerStep := SP_RunStp41;
+			ELSE
+				eManagerStep := SP_RunStp30;(* Skip *)
+			END_IF
+		SP_RunStp41:
+			IF sRunData.sStatusLoader = RS_WaitRequest THEN
+				sRunData.eCmdLoader := RCLo_TakePart;
+				eManagerStep := SP_RunStp42;
+			END_IF
+		SP_RunStp42:
+			IF sRunData.sStatusLoader = RS_WaitRequest THEN
+				sRunData.TDataLoader.eModule := LMP_Table;
+				sRunData.TDataLoader.iLayringPos := 0;
+				sRunData.TDataLoader.iLayringOffsetPos := 0;
+				sRunData.eCmdLoader := RCLo_PrepareDropPart;
+				eManagerStep := SP_RunStp43;
+			END_IF
+		SP_RunStp43:
+			IF sRunData.sStatusLoader = RS_WaitRequest THEN
+				sRunData.eCmdLoader := RCLo_GivePart;
+				sRunData.TDataTable.iGiveTakeLayeringPosition := sRunData.TDataLoader.iLayringPos;
+				sRunData.TDataTable.iGiveTakeLayeringOffsetPosition := sRunData.TDataLoader.iLayringOffsetPos;
+				sRunData.eCmdTable := RCT_TakePart;
+				eManagerStep := SP_RunStp44;
+			END_IF
+		SP_RunStp44:
+			IF sRunData.sStatusLoader = RS_WaitRequest AND  sRunData.sStatusTable = RS_WaitRequest  THEN
+				IF sCmd.TPickPlace.Activate THEN
+					eManagerStep := SP_RunStp30;(* Skip *)
+				ELSE
+					eManagerStep := SP_RunStp1;(* End *)
+				END_IF
+			END_IF
+		SP_RunStp50:
+			IF sRunData.sStatusPearling = RS_WaitRequest THEN
+				bDoChangeTool := FALSE;
+				eManagerStep := SP_RunStp1;
+			END_IF
+	END_CASE
+END_IF
+]]></ST>
+    </Implementation>
+    <LineIds Name="ManagerDashboard">
+      <LineId Id="18" Count="194" />
+    </LineIds>
+  </POU>
+</TcPlcObject>

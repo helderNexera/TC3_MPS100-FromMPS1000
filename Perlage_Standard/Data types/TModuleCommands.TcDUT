@@ -1,0 +1,14 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<TcPlcObject Version="1.1.0.1" ProductVersion="3.1.4022.12">
+  <DUT Name="TModuleCommands" Id="{652ca473-2db9-44d5-89b7-a46dbd6fb350}">
+    <Declaration><![CDATA[TYPE TModuleCommands :
+	(
+		MC_NoCmd,
+		MC_Init,
+		MC_Manual,
+		MC_Stop,
+		MC_Run
+	);
+END_TYPE]]></Declaration>
+  </DUT>
+</TcPlcObject>

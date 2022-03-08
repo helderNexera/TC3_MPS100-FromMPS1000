@@ -1,0 +1,8 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<TcPlcObject Version="1.1.0.1" ProductVersion="3.1.4022.12">
+  <DUT Name="TLiftType" Id="{611aae8d-fad7-4c22-abe6-33582f42755b}">
+    <Declaration><![CDATA[TYPE TLiftType :
+	(LT_LOADER := 0,LT_UNLOADER, LT_REJECT);
+END_TYPE]]></Declaration>
+  </DUT>
+</TcPlcObject>

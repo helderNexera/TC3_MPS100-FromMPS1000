@@ -1,0 +1,13 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<TcPlcObject Version="1.1.0.1" ProductVersion="3.1.4022.12">
+  <DUT Name="TRunCmdPearling" Id="{7ad051bb-179c-49dc-9707-6b555341197b}">
+    <Declaration><![CDATA[TYPE TRunCmdPearling :
+	(
+		RCP_None,
+		RCP_Pearl,
+		RCP_ChangeChuck,
+		RCP_CheckSharpen
+	);
+END_TYPE]]></Declaration>
+  </DUT>
+</TcPlcObject>

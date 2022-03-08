@@ -1,0 +1,17 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<TcPlcObject Version="1.1.0.1" ProductVersion="3.1.4022.12">
+  <DUT Name="TProductionLot" Id="{ffabb8ac-ba4e-473c-bbe5-8a4e8975de7f}">
+    <Declaration><![CDATA[{attribute 'pack_mode' := '1'}
+TYPE TProductionLot :
+STRUCT
+	dLotQty					: DWORD;
+	dProdQty				: DWORD;
+	dGoodQty				: DWORD;
+	dLoadedQty				: DWORD;
+	dEstimatedPartTime		: DWORD;
+	dEstimatedTimeLeft		: DWORD;
+	dProductionTime			: DWORD;
+END_STRUCT
+END_TYPE]]></Declaration>
+  </DUT>
+</TcPlcObject>

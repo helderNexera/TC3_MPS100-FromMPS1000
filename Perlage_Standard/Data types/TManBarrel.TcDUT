@@ -1,0 +1,21 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<TcPlcObject Version="1.1.0.1" ProductVersion="3.1.4022.12">
+  <DUT Name="TManBarrel" Id="{0689e732-c1a3-4b59-9039-a81bd5290e31}">
+    <Declaration><![CDATA[{attribute 'pack_mode' := '1'}
+TYPE TManBarrel :
+	STRUCT
+		iIndexSection				: INT;
+		iIndexPosition 			: INT;
+		iPosition					: INT;
+		bStickPresent 			: BOOL;
+		TBarrelAxis				: TManDrive;
+		TBarrelAxisTakenPos		: TManDrivePos;
+		TBarrelAxisCheckPos		: TManDrivePos;
+		TMoveJackUp			: TManButton;
+		TIndexTable				: TManButton;
+		TMoveTaken				: TManBarrelAxisPosition;
+		TMoveCheck				: TManBarrelAxisPosition;
+	END_STRUCT
+END_TYPE]]></Declaration>
+  </DUT>
+</TcPlcObject>

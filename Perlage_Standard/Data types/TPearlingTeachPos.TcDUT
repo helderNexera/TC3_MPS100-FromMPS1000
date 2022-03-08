@@ -1,0 +1,21 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<TcPlcObject Version="1.1.0.1" ProductVersion="3.1.4022.12">
+  <DUT Name="TPearlingTeachPos" Id="{b9947de1-ae59-4b4f-a721-307a9821bdeb}">
+    <Declaration><![CDATA[TYPE TPearlingTeachPos :
+	(
+		PTP_TableSideAPosZ1 := 0,
+		PTP_TableSideAPosZ2,
+		PTP_TableSideBPosZ1,
+		PTP_TableSideBPosZ2,
+		PTP_BarrelPosZ1,
+		PTP_BarrelPosZ2,
+		PTP_RejectPosZ1,
+		PTP_RejectPosZ2,
+		PTP_Sharpen,
+		PTP_WeightCalibrationPosZ1,
+		PTP_WeightCalibrationPosZ2,
+		PTP_END
+	);
+END_TYPE]]></Declaration>
+  </DUT>
+</TcPlcObject>

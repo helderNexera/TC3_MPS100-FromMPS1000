@@ -1,0 +1,14 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<TcPlcObject Version="1.1.0.1" ProductVersion="3.1.4022.12">
+  <DUT Name="TRunDataTable" Id="{52c84f48-ca66-47bc-8da7-62eaaa0f52d0}">
+    <Declaration><![CDATA[{attribute 'pack_mode' := '1'}
+TYPE TRunDataTable :
+STRUCT
+	aTPartData						: ARRAY[0..1,0..1,0..1] OF TPartData;	(*Layering, Layering Offset, Side *)
+	iGiveTakeLayeringPosition			: INT;
+	iGiveTakeLayeringOffsetPosition	: INT;
+	eTableSide						: TTableSide;
+END_STRUCT
+END_TYPE]]></Declaration>
+  </DUT>
+</TcPlcObject>

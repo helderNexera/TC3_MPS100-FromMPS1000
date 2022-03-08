@@ -1,0 +1,24 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<TcPlcObject Version="1.1.0.1" ProductVersion="3.1.4022.12">
+  <DUT Name="TManUtilities" Id="{e82ad44f-1dad-43bd-a5e7-1043a9e9b275}">
+    <Declaration><![CDATA[{attribute 'pack_mode' := '1'}
+TYPE TManUtilities :
+	STRUCT
+		TAspiration				: TManButton;
+		TVacuum				: TManButton;
+		bPowerIsOn				: BOOL;
+		bDrivesIsOn				: BOOL;
+		b24VOK					: BOOL;
+		b48VOK					: BOOL;
+		bAirPressureOK			: BOOL;
+		bMainVacuumOK			: BOOL;
+		bAspirationOK			: BOOL;
+		bAspirationIsOn			: BOOL;
+		TResetAspirationUseTime	: TManButton;
+		dwAspirationUseTime		: DWORD;
+		TResetVacuumUseTime	: TManButton;
+		dwVacuumUseTime		: DWORD;
+	END_STRUCT
+END_TYPE]]></Declaration>
+  </DUT>
+</TcPlcObject>

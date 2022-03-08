@@ -1,0 +1,19 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<TcPlcObject Version="1.1.0.1" ProductVersion="3.1.4022.12">
+  <DUT Name="TPearlsTable" Id="{1d1dc97a-dc7c-4f53-ad1c-1685cede3432}">
+    <Declaration><![CDATA[{attribute 'pack_mode' := '1'}
+TYPE TPearlsTable :
+STRUCT
+	iArea			: INT;
+	bXYDispersion	: BOOL;
+	bForceSharpen	: BOOL;
+	bDisable			: BOOL;
+	bMoveToSafe	: BOOL;
+	lrX				: LREAL;
+	lrY				: LREAL;
+	lrZ				: LREAL;
+	lrRate			: LREAL;
+END_STRUCT
+END_TYPE]]></Declaration>
+  </DUT>
+</TcPlcObject>

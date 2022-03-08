@@ -1,0 +1,39 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<TcPlcObject Version="1.1.0.1" ProductVersion="3.1.4022.12">
+  <POU Name="InitNewPartData" Id="{a919ad33-0382-4c12-af2e-70609414f8f8}" SpecialFunc="None">
+    <Declaration><![CDATA[FUNCTION InitNewPartData : TPartData
+VAR_INPUT
+END_VAR
+VAR
+	TPartData	: TPartData;
+	i			: INT;
+	j			: INT;
+END_VAR
+]]></Declaration>
+    <Implementation>
+      <ST><![CDATA[TPartData.bPartPresent := FALSE;
+TPartData.bToReject := FALSE;
+TPartData.bSample := FALSE;
+FOR i := 0 TO 1 DO
+	FOR j := 0 TO 1 DO
+		TPartData.abHasPearls[i,j] := FALSE;
+		TPartData.abBadPearling[i,j] := FALSE;
+		TPartData.abPearlingDone[i,j] := FALSE;
+		TPartData.anLastPearlIndexDone[i,j] := 0;
+	END_FOR
+END_FOR
+TPartData.dwPlateInQRCode := 0;
+TPartData.iPlateInPos := 0;
+TPartData.dwPlateOutQRCode := 0;
+TPartData.iPlateOutPos := 0;
+TPartData.ePartSide := PS_SUS;
+TPartData.dwProductionTime := 0;
+TPartData.dwProductionInTime := 0;
+TPartData.dwProductionOutTime := 0;
+InitNewPartData := TPartData;]]></ST>
+    </Implementation>
+    <LineIds Name="InitNewPartData">
+      <LineId Id="9" Count="19" />
+    </LineIds>
+  </POU>
+</TcPlcObject>

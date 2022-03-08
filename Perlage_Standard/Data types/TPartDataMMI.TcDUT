@@ -1,0 +1,32 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<TcPlcObject Version="1.1.0.1" ProductVersion="3.1.4022.12">
+  <DUT Name="TPartDataMMI" Id="{1cfc3f37-0fb2-4391-bc28-ed93c1536f8c}">
+    <Declaration><![CDATA[{attribute 'pack_mode' := '1'}
+TYPE TPartDataMMI :
+STRUCT
+	lrPartOffsetZLiftTake				: LREAL;
+	lrPartOffsetZLiftBadTake			: LREAL;
+	lrPartOffsetZLiftDrop				: LREAL;
+	lrPartOffsetThetaLiftDrop			: LREAL;
+	lrPartOffsetXLiftDrop			: LREAL;
+	lrPartOffsetYLiftDrop			: LREAL;
+	lrPartOffsetZLayeringTake			: LREAL;
+	lrPartOffsetZLayeringDrop			: LREAL;
+	lrPartOffsetZTurnOverDrop			: LREAL;
+	lrPartOffsetZCleaning				: LREAL;
+	alrSensorZOffset					: ARRAY[0..1] OF TPositionXY;
+	alrPartOffsetLayering				: ARRAY[0..1] OF TPositionXY;
+	lrPartAndLayeringHeight			: LREAL;
+	lrPartAndHeadHeight				: LREAL;
+	lrLayeringAndPartAndHeadHeight	: LREAL;
+	lrHeadSusPartHeadSousHeight		: LREAL;
+	lrPlateZOffsetForLift				: LREAL;
+	THeadOffset						: TPositionXY;
+	eDropModeTable					: TLoaderDropMode;
+	eDropModeTurnOver				: TLoaderDropMode;
+	eTakeModeLift					: TLoaderTakeMode;
+	bDropInBox						: BOOL;
+END_STRUCT
+END_TYPE]]></Declaration>
+  </DUT>
+</TcPlcObject>

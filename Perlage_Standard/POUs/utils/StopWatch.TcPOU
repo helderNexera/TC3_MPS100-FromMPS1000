@@ -1,0 +1,58 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<TcPlcObject Version="1.1.0.1" ProductVersion="3.1.4022.12">
+  <POU Name="StopWatch" Id="{eeed5103-20da-4032-8c80-6ad83899aad8}" SpecialFunc="None">
+    <Declaration><![CDATA[FUNCTION_BLOCK StopWatch
+VAR_INPUT
+	bRun		: BOOL;
+	bReset 		: BOOL;
+	bSet		: BOOL;
+	tSetTime		: TIME;
+END_VAR
+VAR_OUTPUT
+	TElapsed	: TIME					:= t#0s;
+END_VAR
+VAR
+	TTimer		: TON;
+	TTotal		: TIME					:= t#0s;
+	bLastRun	: BOOL;
+END_VAR]]></Declaration>
+    <Implementation>
+      <ST><![CDATA[IF bReset THEN
+	TElapsed := t#0s;
+	TTotal := t#0s;
+	TTimer(IN := FALSE);
+	IF bRun THEN
+		TTimer(IN := TRUE,PT := t#49d);
+	END_IF
+ELSIF bSet THEN
+	TTotal := tSetTime;
+	TElapsed := TTotal;
+	TTimer(IN := FALSE);
+	IF bRun THEN
+		TTimer(IN := TRUE,PT := t#49d);
+	END_IF
+ELSE
+	IF bRun THEN
+		TTimer(IN := TRUE,PT := t#49d);
+	END_IF
+	IF bRun <> bLastRun THEN
+		bLastRun := bRun;
+		IF NOT bRun THEN
+			TTotal := TTotal + TTimer.ET;
+			TTimer(IN := FALSE);
+		END_IF
+	END_IF
+	IF bRun THEN
+		TElapsed := TTotal + TTimer.ET;
+	ELSE
+		TElapsed := TTotal;
+	END_IF
+END_IF
+
+]]></ST>
+    </Implementation>
+    <LineIds Name="StopWatch">
+      <LineId Id="15" Count="32" />
+    </LineIds>
+  </POU>
+</TcPlcObject>

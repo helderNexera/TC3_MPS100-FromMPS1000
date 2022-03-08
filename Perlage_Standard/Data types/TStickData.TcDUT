@@ -1,0 +1,14 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<TcPlcObject Version="1.1.0.1" ProductVersion="3.1.4022.12">
+  <DUT Name="TStickData" Id="{694e4e59-b247-4190-a3ad-8e7086ee393f}">
+    <Declaration><![CDATA[{attribute 'pack_mode' := '1'}
+TYPE TStickData :
+STRUCT
+	iBarrelPos			: INT := -1;
+	lrDiameter			: LREAL;
+	lrOutLength			: LREAL;
+	lrTotalLength			: LREAL;
+END_STRUCT
+END_TYPE]]></Declaration>
+  </DUT>
+</TcPlcObject>

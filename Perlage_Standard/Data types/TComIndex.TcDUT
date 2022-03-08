@@ -1,0 +1,8 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<TcPlcObject Version="1.1.0.1" ProductVersion="3.1.4022.12">
+  <DUT Name="TComIndex" Id="{23b8a2e8-9f7b-430f-9c3b-712534771b5d}">
+    <Declaration><![CDATA[TYPE TComIndex :
+	(CI_Pearling:=1);
+END_TYPE]]></Declaration>
+  </DUT>
+</TcPlcObject>

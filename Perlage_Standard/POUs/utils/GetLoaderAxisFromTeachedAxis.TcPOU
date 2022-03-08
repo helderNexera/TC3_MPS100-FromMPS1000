@@ -1,0 +1,26 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<TcPlcObject Version="1.1.0.1" ProductVersion="3.1.4022.12">
+  <POU Name="GetLoaderAxisFromTeachedAxis" Id="{c6114bff-ef03-4a7e-bad1-7b450dfade96}" SpecialFunc="None">
+    <Declaration><![CDATA[FUNCTION GetLoaderAxisFromTeachedAxis : TLoaderAxis
+VAR_INPUT
+	eAxis	: TLoaderTeachedAxis;
+END_VAR
+VAR
+END_VAR]]></Declaration>
+    <Implementation>
+      <ST><![CDATA[CASE eAxis OF
+	LTA_X:
+		GetLoaderAxisFromTeachedAxis := LA_X;
+	LTA_Y:
+		GetLoaderAxisFromTeachedAxis := LA_Y;
+	LTA_Z:
+		GetLoaderAxisFromTeachedAxis := LA_Z1;
+	LTA_THETA:
+		GetLoaderAxisFromTeachedAxis := LA_THETA;
+END_CASE]]></ST>
+    </Implementation>
+    <LineIds Name="GetLoaderAxisFromTeachedAxis">
+      <LineId Id="6" Count="9" />
+    </LineIds>
+  </POU>
+</TcPlcObject>

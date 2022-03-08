@@ -1,0 +1,16 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<TcPlcObject Version="1.1.0.1" ProductVersion="3.1.4022.12">
+  <DUT Name="TLoaderTeachOffset" Id="{0504621e-d8f4-4134-b56d-fb2dd836914b}">
+    <Declaration><![CDATA[TYPE TLoaderTeachOffset :
+	(
+			LTO_Z1			:=0,
+			LTO_Z2,
+			LTO_Plate,
+			LTO_Vision,
+			LTO_ZSensor,
+			LTO_END
+	);
+END_TYPE
+]]></Declaration>
+  </DUT>
+</TcPlcObject>

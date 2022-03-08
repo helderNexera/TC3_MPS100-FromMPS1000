@@ -1,0 +1,8 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<TcPlcObject Version="1.1.0.1" ProductVersion="3.1.4022.12">
+  <DUT Name="THolderIndex" Id="{b64f257c-ffba-4f04-ae83-8bdd9956e7b1}">
+    <Declaration><![CDATA[TYPE THolderIndex :
+	(HI_Loader:=0,HI_TableLeftPart1,HI_TableLeftPart2,HI_TableRightPart1,HI_TableRightPart2,HI_TurnOver,HI_Unloader,HI_END);
+END_TYPE]]></Declaration>
+  </DUT>
+</TcPlcObject>

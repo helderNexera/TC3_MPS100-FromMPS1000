@@ -1,0 +1,52 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<TcPlcObject Version="1.1.0.1" ProductVersion="3.1.4022.12">
+  <POU Name="Dispersion" Id="{b61cf516-dab9-46bd-a886-adf80b843f29}" SpecialFunc="None">
+    <Declaration><![CDATA[FUNCTION_BLOCK Dispersion
+VAR_INPUT
+	bGenerate		: BOOL;
+	bNewPart		: BOOL;
+	nPearl			: UINT;
+END_VAR
+VAR_OUTPUT
+	lrDispersionX		: LREAL;
+	lrDispersionY		: LREAL;
+	lrDispersionZ		: LREAL;
+END_VAR
+VAR PERSISTENT
+	iSeed			: INT := 0;
+END_VAR
+VAR
+	CreateRandom				: DRAND;
+	n							: uINT;
+END_VAR]]></Declaration>
+    <Implementation>
+      <ST><![CDATA[IF bNewPart THEN
+	IF iSeed = 32767 THEN
+		iSeed := -32768;
+	ELSE
+		iSeed := iSeed+1;
+	END_IF
+END_IF
+IF bGenerate THEN
+	(*Reinit random generator with current seed*)
+	IF iSeed = 0 THEN
+		CreateRandom( Seed := -1);
+	ELSE
+		CreateRandom( Seed := 0);
+	END_IF
+	CreateRandom( Seed := iSeed);
+
+	FOR n := 0 TO nPearl * 3 DO
+		CreateRandom( Seed := iSeed);
+	END_FOR
+	CreateRandom( Seed := iSeed , Num => lrDispersionX);
+	CreateRandom( Seed := iSeed , Num => lrDispersionY);
+	CreateRandom( Seed := iSeed , Num => lrDispersionZ);
+END_IF
+]]></ST>
+    </Implementation>
+    <LineIds Name="Dispersion">
+      <LineId Id="18" Count="23" />
+    </LineIds>
+  </POU>
+</TcPlcObject>

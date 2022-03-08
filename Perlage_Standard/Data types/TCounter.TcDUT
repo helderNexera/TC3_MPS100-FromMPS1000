@@ -1,0 +1,19 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<TcPlcObject Version="1.1.0.1" ProductVersion="3.1.4022.12">
+  <DUT Name="TCounter" Id="{99b0c44e-b859-4e43-8e8b-23a3ac2e3a91}">
+    <Declaration><![CDATA[{attribute 'pack_mode' := '1'}
+TYPE TCounter :
+	STRUCT
+		sProd							: TprodCounter;
+		bResetMTBF						: BOOL;
+		dwMeanMTBF					: DWORD;
+		adwPearlingMotorRunningHours		: ARRAY[0..1] OF DWORD;
+		adwPearlingSpindleRunningHours	: ARRAY[0..1] OF DWORD;
+		dwAspirationUseTime				: DWORD;
+		dwVacuumUseTime				: DWORD;
+		dwMachineOnHours				: DWORD;
+		dwInProdHours					: DWORD;
+	END_STRUCT
+END_TYPE]]></Declaration>
+  </DUT>
+</TcPlcObject>

@@ -1,0 +1,45 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<TcPlcObject Version="1.1.0.1" ProductVersion="3.1.4022.12">
+  <POU Name="ComputeVisionPos" Id="{581266fe-19e0-46bc-bb07-e10c14c11b9b}" SpecialFunc="None">
+    <Declaration><![CDATA[FUNCTION_BLOCK ComputeVisionPos
+VAR_INPUT
+	THead			: TPositionXY;
+	lrAngle			: LREAL;
+END_VAR
+VAR_OUTPUT
+	TOffsetPos				: TPositionXYTheta;
+END_VAR
+VAR
+	lrHypotenuse		: LREAL;
+	lrAngle1			: LREAL;
+	lrAngle2			: LREAL;
+	lrAngleVision		: LREAL;
+END_VAR]]></Declaration>
+    <Implementation>
+      <ST><![CDATA[lrAngleVision := LMOD((lrAngle* -1) + 180 + 45,180);
+lrHypotenuse := SQRT(EXPT(THead.lrX,2) + EXPT(THead.lrY,2));
+IF THead.lrX = 0 THEN
+	lrAngle1 := 90;
+ELSE
+	lrAngle1 := RAD_TO_DEG(ATAN(ABS(THead.lrY) / ABS(THead.lrX)));
+END_IF
+IF THead.lrX < 0 AND THead.lrY >= 0 THEN
+	lrAngle1 := lrAngle1 + 90;
+ELSIF THead.lrX < 0 AND THead.lrY < 0 THEN
+	lrAngle1 := lrAngle1 + 180;
+ELSIF THead.lrX >= 0 AND THead.lrY < 0 THEN
+	lrAngle1 := lrAngle1 + 270;
+END_IF
+lrAngle2 := lrAngleVision - lrAngle1;
+TOffsetPos.lrX := COS(DEG_TO_RAD(lrAngle2)) * -lrHypotenuse;
+TOffsetPos.lrY := SIN(DEG_TO_RAD(lrAngle2)) * lrHypotenuse;
+TOffsetPos.lrTheta := lrAngleVision;
+
+
+]]></ST>
+    </Implementation>
+    <LineIds Name="ComputeVisionPos">
+      <LineId Id="14" Count="20" />
+    </LineIds>
+  </POU>
+</TcPlcObject>

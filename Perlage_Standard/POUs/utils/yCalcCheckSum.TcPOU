@@ -1,0 +1,34 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<TcPlcObject Version="1.1.0.1" ProductVersion="3.1.4022.12">
+  <POU Name="yCalcCheckSum" Id="{14df111d-2627-4f77-8d7f-054d656d030a}" SpecialFunc="None">
+    <Declaration><![CDATA[FUNCTION yCalcCheckSum : BYTE
+VAR_INPUT
+	sFrameWoChecksum	: STRING(255);
+END_VAR
+VAR
+	i					: INT;
+	yChecksum			: BYTE;
+	size 					: INT;
+	ps 					: POINTER TO BYTE;
+	yData				: BYTE;
+END_VAR]]></Declaration>
+    <Implementation>
+      <ST><![CDATA[(* Sum the frame data *)
+yChecksum := 0;
+size := LEN(sFrameWoChecksum)-1;
+ps := ADR(sFrameWoChecksum);
+IF size>255 THEN size := 255; END_IF
+FOR i:=0 TO size DO
+	yData := ps^;
+	yChecksum := yChecksum + yData;
+	ps := ps + 1;
+END_FOR
+
+yChecksum := NOT yChecksum + 1;
+yCalcCheckSum := yChecksum;]]></ST>
+    </Implementation>
+    <LineIds Name="yCalcCheckSum">
+      <LineId Id="11" Count="12" />
+    </LineIds>
+  </POU>
+</TcPlcObject>

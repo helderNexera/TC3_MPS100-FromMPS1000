@@ -1,0 +1,89 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<TcPlcObject Version="1.1.0.1" ProductVersion="3.1.4022.12">
+  <POU Name="FB_Vacuum" Id="{7de54c4f-d541-4ab6-84a9-7e2c88c1bdc5}" SpecialFunc="None">
+    <Declaration><![CDATA[FUNCTION_BLOCK FB_Vacuum
+
+(*
+	Description 	: Bloc fonction de gestion d'un module de mise sous vide
+	Auteur		: DLA
+	Date		: 26.03.2014
+	Version		: 1.00
+
+	Modifications :
+
+*)
+
+VAR_INPUT
+	bEnableVacuum				: BOOL	:= FALSE;			(* Demande d'activation du vacuum *)
+	tBlowingTime					: TIME	:= t#200ms;			(* Temps de soufflage à la coupure du vacuum *)
+	tVacErrorDelay				: TIME	:= t#400ms;			(* Temps de détection d'une erreur de vide *)
+	bReset						: BOOL	:= FALSE;			(* MAZ du bloc en cas d'erreur *)
+	bVacuumOK					: BOOL;						(* Capteur de vacuum présent *)
+	tWaitVacuumOK				: TIME	:= t#0ms;				(* Temps de détection d'un vide correct *)
+	bDisableVacuumChecking		: BOOL	:= FALSE;
+END_VAR
+VAR_OUTPUT
+	bVacuumOn				: BOOL	:= FALSE;			(* Activation du vacuum *)
+	bBlowOn					: BOOL	:= FALSE;			(* Activation du soufflage *)
+	bVacuumError			: BOOL	:= FALSE;			(* La demande d'activation s'est terminée par une erreur *)
+	bVacuumCorrect			: BOOL	:= FALSE;			(* La demande d'activation a été bien traitée *)
+	bVacuumStable			: BOOL	:= FALSE;			(* Le vacuum est stabilisé *)
+END_VAR
+VAR
+	bVacuumIsOK			: BOOL	:= FALSE;			(* Information que le vacuum est OK *)
+	TVacError				: TON;
+	TVacOK					: TON;
+	TBlow					: TON;
+	TVacCut					: TON;
+END_VAR]]></Declaration>
+    <Implementation>
+      <ST><![CDATA[(*La commande de vacuum est directement reliée à la requête*)
+bVacuumOn := bEnableVacuum;
+
+bVacuumIsOK := bVacuumOK;
+
+(*On fait tourner les timers de détection de vacuum et de soufflage*)
+TBlow(IN:=NOT bEnableVacuum,PT:=tBlowingTime);
+TVacOK(IN:=bEnableVacuum AND bVacuumOK,PT:=tWaitVacuumOK);
+TVacCut(IN := NOT bEnableVacuum AND NOT bVacuumOK AND NOT bBlowOn, PT := t#100ms);
+bVacuumStable := TVacOK.Q;
+
+IF bEnableVacuum THEN
+	bBlowOn := FALSE;
+	(*On détecte si le vacuum ne s'établit pas assez vite*)
+	TVacError(IN:=NOT (bVacuumOK OR bDisableVacuumChecking) ,PT:=tVacErrorDelay);
+	IF bDisableVacuumChecking THEN
+		bVacuumCorrect := TRUE;
+	ELSE
+		bVacuumCorrect := TVacOK.Q;
+	END_IF
+	IF  TVacError.Q AND NOT bVacuumOK THEN
+		bVacuumError := TRUE;
+	END_IF
+ELSE
+	(*On contrôle que le vacuum s'est bien coupé aprés le soufflage*)
+	bBlowOn := NOT TBlow.Q;
+	bVacuumCorrect := NOT bVacuumOK AND NOT bBlowOn;
+	bVacuumCorrect := TVacCut.Q;
+	TVacError(IN:=bVacuumOK AND NOT bBlowOn,PT:=tVacErrorDelay);
+	IF TVacError.Q THEN
+		bVacuumError := TRUE;
+	END_IF
+END_IF
+IF bVacuumCorrect THEN
+	TVacError(IN:=FALSE);
+END_IF
+IF bReset AND bVacuumError THEN
+	TBlow(IN:= FALSE);
+	TVacError(IN:=FALSE);
+	bVacuumOn := FALSE;
+	bBlowOn := FALSE;
+	bReset := FALSE;
+	bVacuumError := FALSE;
+END_IF]]></ST>
+    </Implementation>
+    <LineIds Name="FB_Vacuum">
+      <LineId Id="35" Count="43" />
+    </LineIds>
+  </POU>
+</TcPlcObject>

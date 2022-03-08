@@ -1,0 +1,24 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<TcPlcObject Version="1.1.0.1" ProductVersion="3.1.4022.12">
+  <DUT Name="TManVision" Id="{ed60d9a4-ae47-4e4e-85c3-fdace0c1dd7d}">
+    <Declaration><![CDATA[{attribute 'pack_mode' := '1'}
+TYPE TManVision :
+	STRUCT
+		TInit					: TManButton;
+		TAnalyse			: TManButton;
+		TRun				: TManButton;
+		TInitTime			: TIMESTRUCT;
+		TAnalyseTime		: TIMESTRUCT;
+		acVisionRecipeName	: STRING(20);
+		bConnected			: BOOL;
+		bReady				: BOOL;
+		bSimRecipe			: BOOL;
+		iUseModel			: INT;
+		iMaxModel			: INT;
+		TPartData			: TVisionPartData;
+		bPartDataValid		: BOOL;
+		bConfigMode			: TManButton ;
+	END_STRUCT
+END_TYPE]]></Declaration>
+  </DUT>
+</TcPlcObject>

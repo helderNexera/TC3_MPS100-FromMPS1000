@@ -1,0 +1,3268 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<TcPlcObject Version="1.1.0.1" ProductVersion="3.1.4022.18">
+  <POU Name="PearlingHdl" Id="{b35848ac-e179-43b9-ad5b-6bfd07a653da}" SpecialFunc="None">
+    <Declaration><![CDATA[FUNCTION_BLOCK PearlingHdl
+
+(*
+	Description 	: Function bloc to handle pearling unit
+	Author		: DLA
+	Date		: 09.06.2014
+	Version		: 1.00
+
+	Modifications :
+                                                                                                                                                                                 
+*)
+
+VAR_INPUT
+	bEnable									: BOOL;										// Not used
+	bPowerOn								: BOOL;										// Power activate
+	eCommand								: TModuleCommands;							// Module commande
+	bHomeX									: BOOL;										// Axe X Sensor home
+	bLimitPosX								: BOOL;										// Axe X Sensor positif limite position
+	bLimitNegX								: BOOL;										// Axe X Sensor negatif limite position
+	bHomeY									: BOOL;										// Axe Y Sensor home
+	bLimitPosY								: BOOL;										// Axe Y Sensor positif limite position 
+	bLimitNegY								: BOOL;										// Axe Y Sensor negatif limite position 
+	bHomeZ1									: BOOL;										// Axe Z1 Sensor home
+	bLimitPosZ1								: BOOL;										// Axe Z1 Sensor positif limite position
+	bLimitNegZ1								: BOOL;										// Axe Z1 Sensor negatif limite position
+	bHomeZ2									: BOOL;										// Axe Z2 Sensor home
+	bLimitPosZ2								: BOOL;										// Axe Z2 Sensor positif limite position
+	bLimitNegZ2								: BOOL;										// Axe Z2 Sensor negatif limite position
+	bChuck1Opened							: BOOL;										// Chuck Z1 is opened
+	bChuck1Closed							: BOOL;										// Chuck Z1 is closed
+	bChuck2Opened							: BOOL;										// Chuck Z2 is opened
+	bChuck2Closed							: BOOL;										// Chuck Z2 is closed
+	bResetErrors							: BOOL;										// Reseting the errors on the module
+	bNewJob									: BOOL;										// New job loaded
+	bStopReq								: BOOL;										// Request for stoping the module
+	bPauseReq								: BOOL;										// Request for pausing the module
+	asStickData								: ARRAY[0..1] OF TStickData;				// Description of the sticks used
+	asStickDataMMI							: ARRAY[0..1] OF TStickDataMMI;				// Information for the use of the sticks from HMI
+	sStickDataShared						: TStickDataShared;							// Information shared betweeen modules for the use of the sticks from HMI
+	lrCompenseWeight1						: LREAL;									// Z1 weight compensation
+	lrCompenseWeight2						: LREAL;									// Z2 weight compensation
+	iComPort								: INT;										// 
+	sInTakeFromBarrel						:TGiver;
+	iContact1Distance						: INT;
+	iContact2Distance						: INT;
+	iLoadSensorValue						: INT;
+	eSharpenRunStatus						: TRunStatus;
+	eBarrelRunStatus						: TRunStatus;
+	eRunCommand								: TRunCmdPearling;
+	bKeepBothHeadWarm						: BOOL;
+	eTableSideForLoader						: TTableSide;
+	sPartData								: TPartDataMMI;
+	bHead1IsUsed							: BOOL;
+	bHead2IsUsed							: BOOL;
+	bParallelProduction						: BOOL;
+	iLeftVacuumFlow							: INT;
+	iRightVacuumFlow						: INT;
+	iMachineWO								: DINT;
+	iMachineSN								: INT;
+	yModulePosition							: BYTE;
+END_VAR
+VAR_OUTPUT
+	bModuleError							: BOOL;
+	bXAxisError								: BOOL;
+	bYAxisError								: BOOL;
+	bZ1AxisError							: BOOL;
+	bZ2AxisError							: BOOL;
+	bChuck1Error							: BOOL;
+	bChuck2Error							: BOOL;
+	bSpindle1Error							: BOOL;
+	bSpindle2Error							: BOOL;
+	bSecurityError							: BOOL;
+	bSecurityErrorDetected					: BOOL;
+	bMCRError								: BOOL;
+	bStick1Broken							: BOOL;
+	bStick2Broken							: BOOL;
+	bStartPearlingMotor1					: BOOL;
+	bStartPearlingMotor2					: BOOL;
+	bOpenChuck1								: BOOL;
+	bOpenChuck2								: BOOL;
+	bActivateEject1							: BOOL;
+	bActivateEject2							: BOOL;
+	bActivateBlowing1						: BOOL;
+	bActivateBlowing2						: BOOL;
+	bAspirationPearling1On					: BOOL;
+	bAspirationPearling2On					: BOOL;
+	bAspirationSharpenOn					: BOOL;
+	bStickContact1							: BOOL;
+	bStickContact2							: BOOL;
+	bCurrent1ReadError						: BOOL;
+	bCurrent2ReadError						: BOOL;
+	bMotor1Error							: BOOL;
+	bMotor2Error							: BOOL;
+	bPearlingWeight1OutOfToleranceError		: BOOL;
+	bPearlingWeight2OutOfToleranceError		: BOOL;
+	bStickNotTakenError						: BOOL;
+	bReady2ChangeTool						: BOOL;
+	iStickHead								: INT;
+	sOutTakeFromBarrel						: TTaker;
+	eSharpenRunCmd							: TRunCmdSharpen;
+	eBarrelRunCmd							: TRunCmdBarrel;
+	eRunStatus								: TRunStatus;
+	bManInterlockOut						: BOOL;
+	adwMotorRunningHours					: ARRAY[0..1] OF DWORD;
+	adwSpindleRunningHours					: ARRAY[0..1] OF DWORD;
+	bLeftSpindleUsedWarning					: BOOL;
+	bRightSpindleUsedWarning				: BOOL;
+	bLeftMotorUsedWarning					: BOOL;
+	bRightMotorUsedWarning					: BOOL;
+	bLeftSpindleLimitWarning				: BOOL;
+	bRightSpindleLimitWarning				: BOOL;
+	bLeftSpindleHeatWarning					: BOOL;
+	bRightSpindleHeatWarning				: BOOL;
+END_VAR
+VAR_IN_OUT
+	sCurrentState							: TModuleData;
+	TManualCmd								: TManPearling;
+	sRecData								: ComBuffer;
+	sTransData								: ComBuffer;
+	asPearlData								: ARRAY[0..1] OF TMMIPearlData;
+	sXAxisRef								: AXIS_REF;
+	sYAxisRef								: AXIS_REF;
+	sZ1AxisRef								: AXIS_REF;
+	sZ2AxisRef								: AXIS_REF;
+	sRunData								: TRunDataPearling;
+	asProbingLog							: ARRAY[0..1] OF  TProbingLog;
+END_VAR
+VAR PERSISTENT
+	alrHighDynParams						: ARRAY[0..3] OF TDynAxisParam;
+	alrLowDynParams							: ARRAY[0..3] OF TDynAxisParam;
+	alrSafePos								: ARRAY[0..3] OF LREAL;
+	alrRobotPos								: ARRAY[0..3,0..PTP_END] OF LREAL;					(* XYZ1Z2 for Ref/Inner/Outer/Drop/... *)
+	alrJogStep								: ARRAY[0..3] OF LREAL;								(* Jog step for X,Y,Z1,Z2 *)
+	lrSharpeningDelta						: LREAL								:= 10;
+	lrSharpenPosOffset						: LREAL								:= 2;
+	alrChuckRetractOffset					: ARRAY[0..1] OF LREAL				:= [1,1];		// TODO: HFO, modifier valeur, original [2, 2]
+	lrStickTakeSpeed						: LREAL								:= 10;
+	bBypassMCR								: BOOL;
+(*	iMaxNbOfFwBwSharpen						: INT	:= 1;*)
+	TBreakStickDetectTime					: TIME	:= t#30ms;
+	aiContactThresholdArea					: ARRAY[0..1, 0..PA_END] OF INT;
+	aiSpindleManualSpeed					: ARRAY[0..1] OF INT;
+	alrSensorRate							: ARRAY[0..1] OF LREAL								(* in Unit / mm *);
+	lrSensorZSpeed							: LREAL								:= 0.1;
+	alrLoadSensorOffset						: ARRAY[0..1] OF LREAL;
+	lrLoadSensorRate						: LREAL								:= 6.36121;			(* in Unit / g *)
+	iLoadSensorTare							: INT								:= 3175;		(* in Unit / g *)
+	alrRatiog2mm							: ARRAY[0..1] OF LREAL				:= [2(0.001)];
+	lrStickErrorDeltaPos					: LREAL								:= 0.5;
+(*	lrSpindelOffsetX						: LREAL								:= 50.0;*)
+	iMCROffsetCurrent						: ARRAY[0..1] OF INT				:= [0,0];
+	iMCRCurrentRatio						: ARRAY[0..1] OF INT				:= [1,1];
+	aiMotorStartedTimeout					: ARRAY[0..1] OF INT 				:= [2000,2000]; (* in ms *)
+	aiMotorStoppedTimeout					: ARRAY[0..1] OF INT 				:= [2000,2000]; (* in ms *)
+	bForceProbing							: BOOL;
+	lrStickOutAfterChange					: LREAL 							:= 12; 			(* mm *)
+	lrProbingThreshold						: LREAL								:= 0.05; 		(* mm *)
+	alrSharpenTeachZOffset					: LREAL								:= 0.4;
+	dwMaxSpindleRunningHours				: DWORD								:= 900;			(*Hours : Max time running spindle before changing it *)
+	dwMaxMotorRunningHours					: DWORD								:= 2000;		(*Hours : Max time running motor before changing it *)
+	iMCRMinThCurrent						: INT								:= 200;
+	iMCRMaxThCurrent 						: INT								:= 800;
+	iMCRWarnThCurrent 						: INT								:= 600;
+	adwPearlsCounter 						: ARRAY[0..1] OF DWORD				:= [2(0)];
+	lrCenterSharpningOffset 				: LREAL 							:= 1.5;
+	lrSecurityPreRefPosZ					: LREAL 							:= 1.5;
+END_VAR
+VAR CONSTANT
+	lrLoadSensorStep						: LREAL								:= 0.02;
+	lrWeightCalibrationStartOffsetZ			: LREAL 							:= 0.1;
+	lrSafeTolerance 						: LREAL 							:= 1;			(* Tolerance for safety Z axis down *)
+	lrMaxXYMoveAllowed						: LREAL 							:= 30;			(* Max move authorized when Z axis is down *)
+	lrManMaxXYMoveAllowed					: LREAL 							:= 2.1;			(* Max move in manual mode authorized when Z axis is down *)
+	lrSecurityRadius						: LREAL								:= 18;
+	bInvertX								: BOOL 								:= FALSE;
+	bInvertY								: BOOL 								:= FALSE;
+	bInvertZ								: BOOL 								:= TRUE;
+	lrLayeringCenterOffsetXTable			: LREAL 							:= 65;
+	lrLayeringCenterOffsetYTable			: LREAL 							:= 18;
+	iHeatOnSpeed							: INT								:= 1000;
+END_VAR
+VAR
+	alrMaxRobotSpeed						: ARRAY[0..3] OF LREAL;
+	alrManualRobotSpeed						: ARRAY[0..3] OF LREAL;
+	i										: INT;
+	j										: INT;
+	iAxis									: INT;
+	iCurrentManAxis							: INT;
+	eRobotXYStatus							: TAxisState;
+	aeMoveRobotCommand						: ARRAY[0..3] OF TAxisCommands		:= [4(AC_None)];
+	aTRobotAxis								: ARRAY[0..3] OF StdAxis;
+	alrCurrentSpeed							: ARRAY[0..3] OF LREAL;
+	alrTargetPos							: ARRAY[0..3] OF LREAL;
+(*	abForceNewPosZ							: ARRAY[0..1] OF BOOL;*)
+	nPearlIndex								: UINT;
+	aTPearlingTimer							: ARRAY[0..1] OF TON;
+	TCheckTimer								: TON;
+	alrPreRefPosZ							: ARRAY[0..1] OF LREAL;
+(*	bRemoveXLimitSecurity					: BOOL;
+	bRemoveYLimitSecurity					: BOOL;*)
+	bManualZIsSafe							: BOOL;
+	abChangeStick							: ARRAY[0..1] OF BOOL				:= [TRUE,TRUE];
+	abSharpenStick							: ARRAY[0..1] OF BOOL				:= [TRUE,TRUE];
+	abDoProbing								: ARRAY[0..1] OF BOOL;
+	abRetryProbing							: ARRAY[0..1] OF BOOL;
+	abProbingDone							: ARRAY[0..1] OF BOOL;
+	aiProbingCount							: ARRAY[0..1] OF INT;
+	alrProbingStartPos						: ARRAY[0..1] OF LREAL;
+	eStickStep								: TModuleSteps;
+	aeProbingStep							: ARRAY[0..1] OF TModuleSteps;
+	TCheckTime								: TIME								:= T#5S;
+	TMCRDrv									: MCRDrv;
+	aTCheckChuck							: ARRAY[0..1] OF FB_CheckJack1_2;
+	alrCorrectionMCR						: ARRAY[0..1] OF LREAL;
+	eMCRCommand								: TMCRCommands;
+	bMCRReady								: BOOL;
+(*	abLastStickContact						: ARRAY[0..1] OF BOOL;*)
+	aiNbOfPearlsDone						: ARRAY[0..1] OF INT;
+	iCurrentArea							: INT;
+	aArea									: ARRAY[0..C_MAX_NB_OF_PEARLS] OF TPearlsArea;
+	alrPearlingEnergy						: ARRAY[0..1] OF LREAL;
+	aTDispersion							: ARRAY[0..1] OF Dispersion;
+	alrRemainingStickLength					: ARRAY[0..1] OF LREAL;
+	aTMotorCounter							: ARRAY[0..1] OF RunningCounter;
+	aTSpindleCounter						: ARRAY[0..1] OF RunningCounter;
+	TWaitChuckOpen							: TON;
+	abZRefTaken								: ARRAY[0..3,0..1,0..1] OF BOOL; 					(*Layring , Offset Layring, Head *)
+	alrSecurityPosition						: ARRAY[0..3,0..1,0..1] OF LREAL;					(*Layring , Offset Layring, Head *)
+	alrContactPosition						: ARRAY[0..3,0..1,0..1] OF LREAL;					(*Layring , Offset Layring, Head *)
+	alrContactStickPosition					: ARRAY[0..3,0..1,0..1] OF LREAL;					(*Layring , Offset Layring, Head *)
+	alrProbingRef							: ARRAY[0..3,0..1,0..1] OF LREAL; 					(*Layring , Offset Layring, Head *)
+	alrHeadSecurityPosition					: ARRAY[0..1] OF LREAL;
+	alrHeadContactPosition					: ARRAY[0..1] OF LREAL;
+	alrHeadContactStickPosition				: ARRAY[0..1] OF LREAL;
+	alrHeadProbingRef						: ARRAY[0..1] OF LREAL;
+	alrSharpenProbing						: ARRAY[0..1] OF LREAL;
+	alrDeltaSharpenProbing					: ARRAY[0..1] OF LREAL;
+	alrStickCorrection						: ARRAY[0..1] OF LREAL;
+	alrDeltaStickCorrection					: ARRAY[0..1] OF LREAL;
+	alrFirstPearlCorrection					: ARRAY[0..1] OF LREAL;
+	abTakeZRef								: ARRAY[0..1] OF BOOL;
+	bClearZRef								: BOOL;
+	abNeedSharpening						: ARRAY[0..1] OF BOOL;
+	abNeedChangeStick						: ARRAY[0..1] OF BOOL;
+	bFirstStart								: BOOL								:= TRUE;
+	bFirstInit								: BOOL								:= TRUE;
+	abBadPearling							: ARRAY[0..1] OF BOOL;
+	alrDynParams							: ARRAY[0..3] OF TDynAxisParam;
+	yMCRChannel								: BYTE;
+	abPearlStarted							: ARRAY[0..1] OF BOOL;
+	abPearlDone								: ARRAY[0..1] OF BOOL;
+	abPearlPosReached						:  ARRAY[0..1] OF BOOL;
+	lrRadius								: LREAL;
+	alrLastProbingPos						: ARRAY[0..1] OF LREAL;
+	aTWaitMotorStarted						: ARRAY[0..1] OF TON;
+	aTWaitMotorStopped						: ARRAY[0..1] OF TON;
+	iNbOfFwBwSharpen						: INT;
+	iNbOfFwBwSharpenBeforeMove				: INT;
+	abNewStick								: ARRAY[0..1] OF BOOL				:= [FALSE,FALSE];
+	iDebugPos								: INT;
+	iDebugSide								: INT;
+	aTDetectStickBroken						: ARRAY[0..1] OF TON;
+(*	bZIsSafe								: BOOL;*)
+	alrProbingPos							: ARRAY[0..1] OF LREAL;
+	alrCheckProbingPos						: ARRAY[0..1] OF LREAL;
+	alrProbingLimit							: ARRAY[0..1] OF LREAL;
+(*	iNbOfPearlsRemainingOnThisArea			: INT;*)
+	abCheckingStick							: ARRAY[0..1] OF BOOL;
+	TWaitCurrentMotorBeltOk					: TON;
+	TWaitCurrentMotorWarmOk					: TON;
+	aTStickContactValidated					: ARRAY[0..1] OF TON;
+	TStickContactValidTime					: TIME								:= T#250MS; // valeur original ==> t#500ms; Temps de stabilisation du capteur de de distance en contacte
+	TStickStabilisationTime					: TIME								:= T#400MS;	// Temps pour stabiliser le capteur de distance sans contact
+	aIMinPos								: ARRAY[0..1] OF INT;
+	alrDeltaZPearl							: ARRAY[0..1] OF LREAL;
+	alrDeltaWeightPearl						: ARRAY[0..1] OF LREAL;
+	iTableIndex								: INT;
+	lrBasePos								: LREAL;
+(*	TWaitEjectorTimer						: TON;*)
+	abWeightTableValid						: ARRAY[0..1] OF BOOL;
+	alrWeightTable							: ARRAY[0..1,0..C_WEIGHT_TABLE_MAX] OF LREAL;
+	iSide									: INT;
+	abStartPearlingMotor					: ARRAY[0..1] OF BOOL;
+	aiContactDistance						: ARRAY[0..1] OF INT;
+	abUseSpindle							: ARRAY[0..1] OF BOOL;
+	abChuckOpened							: ARRAY[0..1] OF BOOL;
+	abChuckClosed							: ARRAY[0..1] OF BOOL;
+	abOpenChuck								: ARRAY[0..1] OF BOOL;
+	abActivateEject							: ARRAY[0..1] OF BOOL;
+	abSpindleError							: ARRAY[0..1] OF BOOL;
+	abAspirationPearling					: ARRAY[0..1] OF BOOL;
+	abStickContact							: ARRAY[0..1] OF BOOL;
+	abActivateBlowing						: ARRAY[0..1] OF BOOL;
+	abCurrentReadError						: ARRAY[0..1] OF BOOL;
+	abMotorError							: ARRAY[0..1] OF BOOL;
+	abSpindleCurrentOk						: ARRAY[0..1] OF BOOL;
+	abStickBroken							: ARRAY[0..1] OF BOOL;
+	abStickBrokenDetected					: ARRAY[0..1] OF BOOL;
+	abPearlNeeded							: ARRAY[0..1] OF BOOL;
+	abHeadIsUsed							: ARRAY[0..1] OF BOOL;
+	abPearlingWeightOutOfToleranceError		: ARRAY[0..1] OF BOOL;
+	abPearlingWeightOutOfToleranceDetected	: ARRAY[0..1] OF BOOL;
+	abFirstPearl							: ARRAY[0..1] OF BOOL;
+	aiCountPearlError						: ARRAY[0..1] OF INT;
+	alrBasePearlingEnergy					: ARRAY[0..1] OF LREAL;
+	alrCompenseWeight						: ARRAY[0..1] OF LREAL;
+	aiPearlingLayringPos					: ARRAY[0..1] OF INT;
+	aiPearlingLayringOffsetPos				: ARRAY[0..1] OF INT;
+	anPearlIndexDone						: ARRAY[0..1] OF UINT;
+	aiSideInfo								: ARRAY[0..1] OF INT;
+	TLayeringCenter							:  TPositionXY;
+	TPearlPosition							:  TPositionXY;
+	iFirstHeadUsed							: INT;
+	iRejectPos								: INT;
+	iChangeStickPos							: INT;
+	nPearl									: UINT;
+	aiPearlingTeachedPos					: ARRAY[0..1] OF INT;
+	alrPearlingOffset						: ARRAY[0..4] OF LREAL;
+	alrPearlingInvert						: ARRAY[0..4] OF LREAL;
+	alrHeadPushed_mm						: ARRAY[0..1] OF LREAL;
+(*	psPartData								: ARRAY[0..1] OF POINTER TO TPartData;*)
+	bChangeToolSide							: BOOL;
+(*	bChangeTool								: BOOL;*)
+	bEndPearling							: BOOL;
+	lrWeight								: LREAL;
+	lrMaxMCRCorrection						: LREAL;
+	bCalibrationInProgress					: BOOL;
+	aeProbingArea							: ARRAY[0..1] OF TProbingArea;
+	TDebug									: TPearlingDebug;
+	aePearlingArea							: ARRAY[0..1] OF TProbingArea;
+	TWaitHeadStab							: TON;
+	atStickValidateTime						: ARRAY[0..1] OF LREAL;
+	aiVacuumFlow							: ARRAY[0..1] OF INT;
+	ayChannelStatus							: ARRAY[0..1] OF BYTE;
+	abCurrentLimitWarning					: ARRAY[0..1] OF BOOL;
+	aTWaitSpindleHeatOn						: ARRAY[0..1] OF TON;
+	aTDetectSpindleCooled					: ARRAY[0..1] OF TON;
+	abNeedSpindleHeatOn						: ARRAY[0..1] OF BOOL;
+	ai_ProbingStep							: ARRAY [0..1] OF INT;
+	i_StickStep								: INT;
+	iDebugPosBrokenStick					: INT;
+END_VAR
+]]></Declaration>
+    <Implementation>
+      <ST><![CDATA[
+(*_AppInfo.BootDataLoaded;			// HFO, to know if boot data was loaded
+_AppInfo.OldBootData;
+_AppInfo.PersistentStatus;*)
+
+(* Optimize code *)
+abStartPearlingMotor[PH_Left] := bStartPearlingMotor1;
+abStartPearlingMotor[PH_Right] := bStartPearlingMotor2;
+aiContactDistance[PH_Left] := iContact1Distance;
+aiContactDistance[PH_Right] := iContact2Distance;
+abChuckOpened[PH_Left] := bChuck1Opened;
+abChuckOpened[PH_Right] := bChuck2Opened;
+abChuckClosed[PH_Left] := bChuck1Closed;
+abChuckClosed[PH_Right] := bChuck2Closed;
+alrCompenseWeight[PH_Left] := lrCompenseWeight1;
+alrCompenseWeight[PH_Right] := lrCompenseWeight2;
+abHeadIsUsed[PH_Left] := bHead1IsUsed;
+abHeadIsUsed[PH_Right] := bHead2IsUsed;
+aiVacuumFlow[PH_LEFT] := iLeftVacuumFlow;
+aiVacuumFlow[PH_RIGHT] := iRightVacuumFlow;
+
+eSharpenRunCmd := RCS_None;
+eBarrelRunCmd := RCB_None;
+
+IF bInvertX THEN
+	alrPearlingInvert[PA_X] := -1;
+ELSE
+	alrPearlingInvert[PA_X] := 1;
+END_IF
+IF bInvertY THEN
+	alrPearlingInvert[PA_Y] := -1;
+ELSE
+	alrPearlingInvert[PA_Y] := 1;
+END_IF
+IF bInvertZ THEN
+	alrPearlingInvert[PA_Z1] := -1;
+	alrPearlingInvert[PA_Z2] := -1;
+ELSE
+	alrPearlingInvert[PA_Z1] := 1;
+	alrPearlingInvert[PA_Z2] := 1;
+END_IF
+
+FOR iAxis := 0 TO 3 DO
+	alrMaxRobotSpeed[iAxis] := aTRobotAxis[iAxis].lrRunningSpeed;
+	alrManualRobotSpeed[iAxis] := aTRobotAxis[iAxis].lrManualSpeed;
+END_FOR
+
+IF (NOT sCurrentState.bStepMode) THEN
+	sCurrentState.bWaitStep := FALSE;
+END_IF
+
+IF bFirstStart THEN
+	FOR iSide := 0 TO 1 DO
+		abWeightTableValid[iSide] := FALSE;
+		aTDetectSpindleCooled[iSide](IN := FALSE);
+		aTWaitSpindleHeatOn[iSide](IN := FALSE);
+		abNeedSpindleHeatOn[iSide] := TRUE;
+	END_FOR
+	bFirstStart := FALSE;
+END_IF
+
+IF bNewJob THEN
+	FOR iSide := 0 TO 1 DO
+		abSharpenStick[iSide] := TRUE;
+		aiNbOfPearlsDone[iSide] := 1;
+	END_FOR
+	bClearZRef := TRUE;
+END_IF
+
+FOR iSide:=0 TO 1 DO
+	abStickContact[iSide] := aiContactDistance[iSide] > (aiContactThresholdArea[iSide , aeProbingArea[iSide]] + 0.05 * alrSensorRate[iSide]);
+	aTWaitMotorStarted[iSide](IN := abStartPearlingMotor[iSide],PT := INT_TO_TIME(aiMotorStartedTimeout[iSide]));
+	aTWaitMotorStopped[iSide](IN := NOT abStartPearlingMotor[iSide],PT := INT_TO_TIME(aiMotorStoppedTimeout[iSide]));
+	aTMotorCounter[iSide](bStart := abStartPearlingMotor[iSide], bReset := FALSE);
+	aTSpindleCounter[iSide](bStart := abStartPearlingMotor[iSide], bReset := FALSE);
+	IF NOT abDoProbing[iSide] THEN
+		abProbingDone[iSide] := FALSE;
+	END_IF
+	(* For debug purpose *)
+	IF alrSensorRate[iSide] <> 0 THEN
+		alrHeadPushed_mm[iSide] := INT_TO_REAL(LREAL_TO_INT(((aiContactDistance[iSide]-aiContactThresholdArea[iSide , aeProbingArea[iSide]])/alrSensorRate[iSide])*100))/100.0;
+	ELSE
+		alrHeadPushed_mm[iSide] := 0;
+	END_IF
+	alrBasePearlingEnergy[iSide] := sRunData.sPearlingData.iWeight +  alrCompenseWeight[iSide];
+	IF bParallelProduction THEN
+		aiSideInfo[iSide] := 0;
+	ELSE
+		aiSideInfo[iSide] := iSide;
+	END_IF
+END_FOR
+
+(* For debug purpose *)
+IF lrLoadSensorRate<>0 THEN
+	lrWeight := (INT_TO_LREAL(iLoadSensorValue) - INT_TO_LREAL(iLoadSensorTare)) / lrLoadSensorRate;
+ELSE
+	lrWeight := 0;
+END_IF
+
+CASE eCommand OF
+	MC_NoCmd :
+		CASE sCurrentState.eStatus OF
+			MS_Init :
+				CASE sCurrentState.eStep OF
+(*----------------- Init ------------------*)
+					SP_InitStp1 :
+						FOR iSide := 0 TO 1 DO
+							abAspirationPearling[iSide] := FALSE;
+							abActivateEject[iSide] := FALSE;
+							(* Move Z Up *)
+							aeMoveRobotCommand[PA_Z1+iSide] := AC_MoveLimitNeg;
+						END_FOR
+						bAspirationSharpenOn := FALSE;
+						alrCurrentSpeed := alrMaxRobotSpeed;
+						sCurrentState.eStep := SP_InitStp2;
+					SP_InitStp2 :
+						IF aTRobotAxis[PA_Z1].eCurrentState = AS_OnLimitNeg  AND
+						     aTRobotAxis[PA_Z2].eCurrentState = AS_OnLimitNeg THEN
+							(* Init X / Y*)
+							aeMoveRobotCommand[PA_X] := AC_Init;
+							aeMoveRobotCommand[PA_Y] := AC_Init;
+							sCurrentState.eStep := SP_InitStp3;
+						END_IF
+					SP_InitStp3 :
+						IF 	(aTRobotAxis[PA_X].eCurrentState = AS_InPosition) AND
+							(aTRobotAxis[PA_Y].eCurrentState = AS_InPosition) THEN
+							(* Move X/ Y to Safe *)
+							alrTargetPos[PA_X] := alrSafePos[PA_X];
+							alrTargetPos[PA_Y] := alrSafePos[LA_Y];
+							aeMoveRobotCommand[PA_X] := AC_MoveAtAbsPos;
+							aeMoveRobotCommand[PA_Y] := AC_MoveAtAbsPos;
+							sCurrentState.eStep := SP_InitStp4;
+						END_IF
+					SP_InitStp4 :
+						IF aTRobotAxis[PA_X].eCurrentState = AS_InPosition AND
+						     aTRobotAxis[PA_Y].eCurrentState = AS_InPosition THEN
+								(* Init Z *)
+								aeMoveRobotCommand[PA_Z1] := AC_Init;
+								aeMoveRobotCommand[PA_Z2] := AC_Init;
+								sCurrentState.eStep := SP_InitStp5;
+						END_IF
+					SP_InitStp5 :
+						IF aTRobotAxis[PA_Z1].eCurrentState=AS_InPosition AND
+							aTRobotAxis[PA_Z2].eCurrentState=AS_InPosition THEN
+							(* Move Z to Safe *)
+							alrTargetPos[PA_Z1] := alrSafePos[PA_Z1];
+							alrTargetPos[PA_Z2] := alrSafePos[LA_Z2];
+							aeMoveRobotCommand[PA_Z1] := AC_MoveAtAbsPos;
+							aeMoveRobotCommand[PA_Z2] := AC_MoveAtAbsPos;
+							sCurrentState.eStep := SP_InitStp6;
+						END_IF
+					SP_InitStp6 :
+						IF  aTRobotAxis[PA_Z1].eCurrentState = AS_InPosition AND
+						     aTRobotAxis[PA_Z2].eCurrentState = AS_InPosition THEN
+							IF bBypassMCR THEN
+								sCurrentState.eStep := SP_InitStp99;
+							ELSIF bMCRReady THEN
+								yMCRChannel := 1;
+								sCurrentState.eStep := SP_InitStp10;
+							END_IF
+						END_IF
+					SP_InitStp10 :
+						(* Configure MCR *)
+						eMCRCommand := MCRC_ConfigMeasure;
+						sCurrentState.eStep := SP_InitStp11;
+					SP_InitStp11 :
+						IF bMCRReady THEN
+							IF yMCRChannel = 1 THEN
+								yMCRChannel := 2;
+								sCurrentState.eStep := SP_InitStp10;
+							ELSE
+								yMCRChannel := 1;
+								sCurrentState.eStep := SP_InitStp12;
+							END_IF
+						END_IF
+					SP_InitStp12 :
+						eMCRCommand := MCRC_SetRatio;
+						TMCRDrv.lrRatio := asStickDataMMI[yMCRChannel - 1].lrMCRRatio;
+						sCurrentState.eStep := SP_InitStp13;
+					SP_InitStp13 :
+						IF bMCRReady THEN
+							IF yMCRChannel = 1 THEN
+								yMCRChannel := 2;
+								sCurrentState.eStep := SP_InitStp12;
+							ELSE
+								yMCRChannel := 1;
+								sCurrentState.eStep := SP_InitStp14;
+							END_IF
+						END_IF
+					SP_InitStp14 :
+						(* Do spindle heat on if needed *)
+						TMCRDrv.iSpeedSetpoint := iHeatOnSpeed;;
+						eMCRCommand := MCRC_SetSpeed;
+						sCurrentState.eStep := SP_InitStp15;
+					SP_InitStp15 :
+						IF bMCRReady THEN
+							IF yMCRChannel = 1 THEN
+								yMCRChannel := 2;
+								sCurrentState.eStep := SP_InitStp14;
+							ELSE
+								yMCRChannel := 1;
+								sCurrentState.eStep := SP_InitStp16;
+							END_IF
+						END_IF
+					SP_InitStp16 :
+						abStartPearlingMotor[PH_Left] := abNeedSpindleHeatOn[PH_Left];
+						abStartPearlingMotor[PH_Right] := abNeedSpindleHeatOn[PH_Right];
+						sCurrentState.eStep := SP_InitStp17;
+					SP_InitStp17 :
+						IF (NOT (abNeedSpindleHeatOn[PH_Left] AND abStartPearlingMotor[PH_Left]) AND 
+								NOT (abNeedSpindleHeatOn[PH_Right] AND abStartPearlingMotor[PH_Right])) THEN
+							sCurrentState.eStep := SP_InitStp25;
+						END_IF
+					SP_InitStp25 :
+						eMCRCommand := MCRC_SetSpeed;
+						TMCRDrv.iSpeedSetpoint := sStickDataShared.sStickDataMMIShared.iMCRSharpenSpeed;
+						sCurrentState.eStep := SP_InitStp26;
+					SP_InitStp26 :
+						IF bMCRReady THEN
+							IF yMCRChannel = 1 THEN
+								yMCRChannel := 2;
+								sCurrentState.eStep := SP_InitStp25;
+							ELSE
+								yMCRChannel := 1;
+								sCurrentState.eStep := SP_InitStp27;
+							END_IF
+						END_IF
+					SP_InitStp27:
+						(* Set Parameter*)
+						IF NOT bFirstInit THEN
+							eMCRCommand := MCRC_SetParam;
+							TMCRDrv.iOffsetCurrent := iMCROffsetCurrent[yMCRChannel - 1];
+							TMCRDrv.iCurrentRatio := iMCRCurrentRatio[yMCRChannel - 1];
+						END_IF
+						sCurrentState.eStep := SP_InitStp28;
+					SP_InitStp28:
+						IF bMCRReady THEN
+							IF yMCRChannel = 1 THEN
+								yMCRChannel := 2;
+								sCurrentState.eStep := SP_InitStp27;
+							ELSE
+								yMCRChannel := 1;
+								sCurrentState.eStep := SP_InitStp29;
+							END_IF
+						END_IF
+					SP_InitStp29:
+						(* Set threshold*)
+						eMCRCommand := MCRC_DefineCurrentThr;
+						TMCRDrv.iMinThCurrent := iMCRMinThCurrent;
+						TMCRDrv.iMaxThCurrent := iMCRMaxThCurrent;
+						TMCRDrv.iWarnThCurrent := iMCRWarnThCurrent;
+						sCurrentState.eStep := SP_InitStp30;
+					SP_InitStp30:
+						IF bMCRReady THEN
+							IF yMCRChannel = 1 THEN
+								yMCRChannel := 2;
+								sCurrentState.eStep := SP_InitStp29;
+							ELSE
+								yMCRChannel := 1;
+								sCurrentState.eStep := SP_InitStp31;
+							END_IF
+						END_IF
+					SP_InitStp31:
+						IF NOT bFirstInit THEN
+							(* Set MachineID*)
+							eMCRCommand := MCRC_DefineMachineID;
+							TMCRDrv.iMachineWO := iMachineWO;
+							TMCRDrv.iMachineSN := iMachineSN;
+							TMCRDrv.yMachineSide := asc('a') + yModulePosition;
+						END_IF
+						sCurrentState.eStep := SP_InitStp32;
+					SP_InitStp32:
+						IF bMCRReady THEN
+							IF yMCRChannel = 1 THEN
+								yMCRChannel := 2;
+								sCurrentState.eStep := SP_InitStp31;
+							ELSE
+								yMCRChannel := 1;
+								sCurrentState.eStep := SP_InitStp99;
+							END_IF
+						END_IF
+					SP_InitStp50: (*Init if already init done, always move Z to safe *)
+						(* Go to safe position *)
+						alrCurrentSpeed := alrMaxRobotSpeed;
+						alrTargetPos[PA_Z1] := alrSafePos[PA_Z1];
+						alrTargetPos[PA_Z2] := alrSafePos[PA_Z2];
+						aeMoveRobotCommand[PA_Z1] := AC_MoveAtAbsPos;
+						aeMoveRobotCommand[PA_Z2] := AC_MoveAtAbsPos;
+						sCurrentState.eStep := SP_InitStp51;
+					SP_InitStp51 :
+						IF 	(aTRobotAxis[PA_Z1].eCurrentState = AS_InPosition) AND
+							(aTRobotAxis[PA_Z2].eCurrentState = AS_InPosition) THEN
+							sCurrentState.eStep := SP_InitStp99;
+						END_IF
+					SP_InitStp99 :
+						bFirstInit := FALSE;
+						FOR iSide := 0 TO 1 DO
+							abDoProbing[iSide] := FALSE;
+							abUseSpindle[iSide] := FALSE;
+							abRetryProbing[iSide] := FALSE;
+							aiProbingCount[iSide] := 0;
+						END_FOR
+						sCurrentState.eStatus := MS_Ready;
+						sCurrentState.bInitDone := TRUE;
+						sCurrentState.eStep := SP_RunStp1;
+						eStickStep := SP_RunStp1;
+						aeProbingStep[PH_Left] := SP_RunStp1;
+						aeProbingStep[PH_Right] := SP_RunStp1;
+
+				END_CASE
+			MS_Running :
+				IF (NOT sCurrentState.bWaitStep) THEN
+(*----------------- Probing ------------------*)
+					FOR iSide := 0 TO 1 DO
+						CASE aeProbingStep[iSide] OF
+							SP_RunStp1 :
+								IF abDoProbing[iSide] THEN
+									aiProbingCount[iSide] := 0;
+									alrProbingStartPos[iSide] := alrTargetPos[PA_Z1 + iSide];
+									abProbingDone[iSide] := FALSE;
+									abStartPearlingMotor[iSide] := FALSE;
+									aeProbingStep[iSide] := SP_RunStp20;
+								END_IF
+							SP_RunStp20:
+								(* Continuous move probing with analog sensor *)
+								IF (aTRobotAxis[PA_Z1+ iSide].eCurrentState = AS_InPosition) AND aTWaitMotorStopped[iSide].Q THEN
+									(* Move 0.5 mm above probing pos to check default sensor value *)
+									alrTargetPos[PA_Z1 + iSide] := alrProbingStartPos[iSide] - 0.5;		// TODO : HFO modifier valeur en dure, original 0.5
+									alrCurrentSpeed[PA_Z1 + iSide] := alrMaxRobotSpeed[PA_Z1 + iSide];
+									aeMoveRobotCommand[PA_Z1 + iSide] := AC_MoveAtAbsPos;
+									aTStickContactValidated[iSide](IN := FALSE);
+									aeProbingStep[iSide] := SP_RunStp21;
+								END_IF
+							SP_RunStp21:
+								IF (aTRobotAxis[PA_Z1 + iSide].eCurrentState = AS_InPosition) THEN
+									aTStickContactValidated[iSide](IN := TRUE,PT := TStickStabilisationTime);	// Valueur original ==> PT := TStickContactValidTime
+									IF aTStickContactValidated[iSide].Q THEN
+										asProbingLog[iSide].iPreviousProbingThreshold := aiContactThresholdArea[iSide , aeProbingArea[iSide]];
+										aiContactThresholdArea[iSide , aeProbingArea[iSide]] := aiContactDistance[iSide];
+										(* Move down 0.5mm *)
+										alrTargetPos[PA_Z1 + iSide] := alrProbingStartPos[iSide]- 0.3;  		// TODO : HFO, Ajout de valeur negative
+										//alrTargetPos[PA_Z1 + iSide] := alrProbingStartPos[iSide];
+										aeMoveRobotCommand[PA_Z1 + iSide] := AC_MoveAtAbsPos;
+										aTStickContactValidated[iSide](IN := FALSE);
+										aeProbingStep[iSide] := SP_RunStp25;
+									END_IF
+								END_IF
+							SP_RunStp25:
+								IF (aTRobotAxis[PA_Z1 + iSide].eCurrentState = AS_InPosition) THEN
+									aTStickContactValidated[iSide](IN := TRUE,PT := TStickContactValidTime);
+									IF aTStickContactValidated[iSide].Q THEN
+										(* Check if we must go up or down *)
+										IF (aiContactDistance[iSide] > aiContactThresholdArea[iSide , aeProbingArea[iSide]] + alrSensorRate[iSide] * lrProbingThreshold) THEN
+											(* Go up *)
+											aeProbingStep[iSide] := SP_RunStp30;
+										ELSE
+											(* Go down *)
+											aeProbingStep[iSide] := SP_RunStp40;
+										END_IF								
+									END_IF
+								END_IF	
+							SP_RunStp30:
+								(* Move up slowly until we get contact *)
+								alrTargetPos[PA_Z1 + iSide] := alrProbingStartPos[iSide] - 2;
+								alrCurrentSpeed[PA_Z1 + iSide] := lrSensorZSpeed;
+								aeMoveRobotCommand[PA_Z1 + iSide] := AC_MoveAtAbsPos;
+								aeProbingStep[iSide] := SP_RunStp35;
+							SP_RunStp35:
+								IF (aiContactDistance[iSide] < aiContactThresholdArea[iSide , aeProbingArea[iSide]] + alrSensorRate[iSide] * lrProbingThreshold) THEN
+									aTStickContactValidated[iSide](IN := FALSE);
+									aeMoveRobotCommand[PA_Z1 + iSide] := AC_Stop;
+									aeProbingStep[iSide] := SP_RunStp50;
+									sCurrentState.bWaitStep := TRUE;
+								ELSIF (aTRobotAxis[PA_Z1 + iSide].eCurrentState = AS_InPosition) THEN
+									aeMoveRobotCommand[PA_Z1] := AC_Stop;
+									aeMoveRobotCommand[PA_Z2] := AC_Stop;
+									bSecurityError := TRUE;
+									iDebugPos := 1;
+									iDebugSide := iSide;
+								END_IF
+							SP_RunStp40:
+								(* Move down slowly until we get contact *)
+								alrTargetPos[PA_Z1 + iSide] := alrProbingLimit[iSide];
+								alrCurrentSpeed[PA_Z1 + iSide] := lrSensorZSpeed;
+								aeMoveRobotCommand[PA_Z1 + iSide] := AC_MoveAtAbsPos;
+								aeProbingStep[iSide] := SP_RunStp45;
+							SP_RunStp45:
+								IF (aiContactDistance[iSide] > aiContactThresholdArea[iSide , aeProbingArea[iSide]] + alrSensorRate[iSide] * lrProbingThreshold) THEN
+									aTStickContactValidated[iSide](IN := FALSE);
+									aeMoveRobotCommand[PA_Z1 + iSide] := AC_Stop;
+									aeProbingStep[iSide] := SP_RunStp50;
+									sCurrentState.bWaitStep := TRUE;
+								ELSIF (aTRobotAxis[PA_Z1 + iSide].eCurrentState = AS_InPosition) THEN
+									aeMoveRobotCommand[PA_Z1] := AC_Stop;
+									aeMoveRobotCommand[PA_Z2] := AC_Stop;
+									bSecurityError := TRUE;
+									iDebugPos := 10;
+									iDebugSide := iSide;
+								END_IF
+							SP_RunStp50:
+								IF (aTRobotAxis[PA_Z1 + iSide].eCurrentState = AS_InPosition) THEN
+									aTStickContactValidated[iSide](IN := TRUE,PT := TStickContactValidTime);
+									IF aTStickContactValidated[iSide].Q THEN
+										alrProbingPos[iSide] := aTRobotAxis[PA_Z1 + iSide].lrCurrentPos - (aiContactDistance[iSide] - aiContactThresholdArea[iSide , aeProbingArea[iSide]])/alrSensorRate[iSide];
+										(* Move 2 mm above probing pos to check 1st measure *)
+										alrTargetPos[PA_Z1 + iSide] := aTRobotAxis[PA_Z1 + iSide].lrCurrentPos - 2;
+										alrCurrentSpeed[PA_Z1 + iSide] := alrMaxRobotSpeed[PA_Z1 + iSide];
+										aeMoveRobotCommand[PA_Z1 + iSide] := AC_MoveAtAbsPos;
+										aeProbingStep[iSide] := SP_RunStp55;
+									END_IF
+								END_IF
+							SP_RunStp55:
+								IF (aTRobotAxis[PA_Z1 + iSide].eCurrentState = AS_InPosition) AND NOT asProbingLog[iSide].bNewLog THEN
+									(* Move to contact position *)
+									alrTargetPos[PA_Z1 + iSide] := alrTargetPos[PA_Z1 + iSide]+2;
+									aeMoveRobotCommand[PA_Z1 + iSide] := AC_MoveAtAbsPos;
+									aTStickContactValidated[iSide](IN := FALSE);
+									aeProbingStep[iSide] := SP_RunStp60;
+								END_IF
+							SP_RunStp60:
+								IF (aTRobotAxis[PA_Z1 + iSide].eCurrentState = AS_InPosition) THEN
+									aTStickContactValidated[iSide](IN := TRUE,PT := TStickContactValidTime);
+									IF aTStickContactValidated[iSide].Q THEN
+										alrCheckProbingPos[iSide] := aTRobotAxis[PA_Z1 + iSide].lrCurrentPos - (aiContactDistance[iSide] - aiContactThresholdArea[iSide , aeProbingArea[iSide]])/alrSensorRate[iSide];
+										asProbingLog[iSide].alrProbingPos[PH_Left] := alrProbingPos[iSide];
+										asProbingLog[iSide].alrProbingPos[PH_Right] := alrCheckProbingPos[iSide];
+										asProbingLog[iSide].eProbingArea := aeProbingArea[iSide];
+										asProbingLog[iSide].iProbingThreshold := aiContactThresholdArea[iSide , aeProbingArea[iSide]];
+										asProbingLog[iSide].bNewLog := TRUE;
+(* DLA										IF (ABS(alrProbingPos[iSide] - alrCheckProbingPos[iSide]) < 0.1) THEN *)
+										IF (ABS(alrProbingPos[iSide] - alrCheckProbingPos[iSide]) < 0.3) THEN
+											abProbingDone[iSide] := TRUE;
+											aeProbingStep[iSide] := SP_RunStp70;
+										ELSIF abRetryProbing[iSide] AND aiProbingCount[iSide] < 3 AND (ABS(alrProbingPos[iSide] - alrCheckProbingPos[iSide]) < 0.3)THEN
+											aiProbingCount[iSide] := aiProbingCount[iSide] + 1;
+											aeProbingStep[iSide] := SP_RunStp20;
+										ELSE
+											bSecurityError := TRUE;
+											iDebugPos := 2;
+											iDebugSide := iSide;
+										END_IF
+									END_IF
+								END_IF
+							SP_RunStp70:
+								IF NOT abDoProbing[iSide] THEN
+									aeProbingStep[iSide] := SP_RunStp1;
+								END_IF
+						END_CASE
+					END_FOR
+(*----------------- Stick gestion ------------------*)
+					CASE eStickStep OF
+						SP_RunStp1 :
+							IF (aTRobotAxis[PA_Z1].eCurrentState = AS_InPosition) AND (aTRobotAxis[PA_Z2].eCurrentState = AS_InPosition) THEN
+								FOR iSide := 0 TO 1 DO
+									IF abChangeStick[iSide] AND abUseSpindle[iSide] THEN
+										abSharpenStick[iSide] := TRUE;
+										eStickStep := SP_RunStp2; (* Change Stick [Serial]*)
+									END_IF
+								END_FOR
+								IF (eStickStep <> SP_RunStp2) THEN
+									FOR iSide := 0 TO 1 DO
+										IF abSharpenStick[iSide] AND abUseSpindle[iSide] THEN
+											IF NOT abChuckClosed[iSide] THEN
+												abSharpenStick[iSide] := FALSE;
+											ELSE
+												IF abNewStick[iSide] OR aiNbOfPearlsDone[iSide]>0 THEN
+													eStickStep := SP_RunStp50; (* Sharpen [parallel]*)
+												ELSIF NOT abNewStick[iSide] AND abSharpenStick[iSide] AND aiNbOfPearlsDone[iSide]=0 THEN
+													(* sharpen is not need if no pearl has been made *)
+													abSharpenStick[iSide] := FALSE;
+												END_IF
+											END_IF
+										END_IF
+									END_FOR
+								END_IF
+							END_IF
+						SP_RunStp2 : (* Change Stick [Serial]*)
+							FOR iSide := 0 TO 1 DO
+								(* Stop motors *)
+								abStartPearlingMotor[iSide] := FALSE;
+								(* Move Z to safe *)
+								alrTargetPos[PA_Z1+iSide] := alrSafePos[PA_Z1+iSide];
+								aeMoveRobotCommand[PA_Z1+iSide] := AC_MoveAtAbsPos;
+							END_FOR
+							eStickStep := SP_RunStp10;
+						SP_RunStp10 :  (* Reject Stick [Serial]*)
+							IF (aTRobotAxis[PA_Z1].eCurrentState = AS_InPosition) AND
+									(aTRobotAxis[PA_Z2].eCurrentState = AS_InPosition) THEN
+								eStickStep := SP_RunStp20; (* Nothing to reject, Get new Stick *)
+								FOR iSide := 0 TO 1 DO
+									(* First drop stick if any *)
+									IF abChuckClosed[iSide] AND abChangeStick[iSide] AND abUseSpindle[iSide] THEN
+										iRejectPos := iSide;
+										eStickStep := SP_RunStp11; (* First drop stick if any *)
+										EXIT;
+									END_IF
+								END_FOR
+							END_IF
+						SP_RunStp11 :
+							(* Move to reject *)
+							alrTargetPos[PA_X] := alrRobotPos[PA_X,PTP_RejectPosZ1+iRejectPos];
+							alrTargetPos[PA_Y] := alrRobotPos[PA_Y,PTP_RejectPosZ1+iRejectPos];
+							aeMoveRobotCommand[PA_X] := AC_MoveAtAbsPos;
+							aeMoveRobotCommand[PA_Y] := AC_MoveAtAbsPos;
+							eStickStep := SP_RunStp12;
+						SP_RunStp12 :
+							IF (eRobotXYStatus = AS_InPosition) THEN
+								(* Move Z to reject pos *)
+								alrTargetPos[PA_Z1+iRejectPos] := alrRobotPos[PA_Z1 + iRejectPos,PTP_RejectPosZ1+iRejectPos];
+								aeMoveRobotCommand[PA_Z1+iRejectPos] := AC_MoveAtAbsPos;
+								eStickStep := SP_RunStp13;
+							END_IF
+						SP_RunStp13 :
+							IF (aTRobotAxis[PA_Z1+iRejectPos].eCurrentState = AS_InPosition) THEN
+								(* Open chuck *)
+								abOpenChuck[iRejectPos] := TRUE;
+								TCheckTimer(IN := FALSE);
+								eStickStep := SP_RunStp14;
+							END_IF
+						SP_RunStp14 :
+							IF abChuckOpened[iRejectPos] THEN
+								abActivateEject[iRejectPos] := TRUE;
+								TCheckTimer(IN := TRUE,PT := TCheckTime);
+								IF TCheckTimer.Q THEN
+									abActivateEject[iRejectPos] := FALSE;
+									alrTargetPos[PA_Z1+iRejectPos] := alrSafePos[PA_Z1+iRejectPos];
+									aeMoveRobotCommand[PA_Z1+iRejectPos] := AC_MoveAtAbsPos;
+									eStickStep :=  SP_RunStp10;
+								END_IF
+							ELSE
+								TCheckTimer(IN := FALSE);
+							END_IF
+						SP_RunStp20 :  (* Get new stick [Serial]*)
+							IF (aTRobotAxis[PA_Z1].eCurrentState = AS_InPosition) AND
+									(aTRobotAxis[PA_Z2].eCurrentState = AS_InPosition) THEN
+								eStickStep := SP_RunStp1; (* Nothing to change *)
+								FOR iSide := 0 TO 1 DO
+									IF abChangeStick[iSide]  AND abUseSpindle[iSide] THEN
+										iChangeStickPos := iSide;
+										eStickStep := SP_RunStp21; (* Get new stick *)
+										EXIT;
+									END_IF
+								END_FOR
+							END_IF
+						SP_RunStp21 :
+							iStickHead := iChangeStickPos+1;
+							eBarrelRunCmd := RCB_PrepareStick;
+							alrTargetPos[PA_X] := alrRobotPos[PA_X,PTP_BarrelPosZ1+iChangeStickPos];
+							alrTargetPos[PA_Y] := alrRobotPos[PA_Y,PTP_BarrelPosZ1+iChangeStickPos];
+							aeMoveRobotCommand[PA_X] := AC_MoveAtAbsPos;
+							aeMoveRobotCommand[PA_Y] := AC_MoveAtAbsPos;
+							eStickStep := SP_RunStp22;
+						SP_RunStp22 :
+							IF (eRobotXYStatus = AS_InPosition) AND (eBarrelRunStatus= RS_WaitRequest ) THEN
+								sOutTakeFromBarrel.bHasTaken := FALSE;
+								sOutTakeFromBarrel.bReadyToTake := FALSE;
+								eBarrelRunCmd := RCB_GiveStick;
+								eStickStep := SP_RunStp23;
+							END_IF
+						SP_RunStp23 :
+							IF (eRobotXYStatus = AS_InPosition)  THEN
+								(* Move Z to stick pos *)
+								alrTargetPos[PA_Z1+iChangeStickPos] := alrRobotPos[PA_Z1+iChangeStickPos,PTP_BarrelPosZ1+iChangeStickPos];
+								aeMoveRobotCommand[PA_Z1+iChangeStickPos] := AC_MoveAtAbsPos;
+								eStickStep := SP_RunStp24;
+							END_IF
+						SP_RunStp24 :
+							IF (ABS(aTRobotAxis[PA_Z1+iChangeStickPos].lrCurrentPos - alrTargetPos[PA_Z1+iChangeStickPos]) <= 10) THEN
+								(* reduce speed when take stick *)
+								alrCurrentSpeed[PA_Z1+iChangeStickPos] := lrStickTakeSpeed;
+							END_IF
+							IF (aTRobotAxis[PA_Z1+iChangeStickPos].eCurrentState = AS_InPosition) THEN
+								alrCurrentSpeed := alrMaxRobotSpeed;
+								sOutTakeFromBarrel.bReadyToTake := TRUE;
+								eStickStep := SP_RunStp25;
+							END_IF
+						SP_RunStp25 :
+							IF sInTakeFromBarrel.bHasGiven THEN
+								(* Close chuck *)
+								abOpenChuck[iChangeStickPos] := FALSE;
+								eStickStep := SP_RunStp26;
+							END_IF
+						SP_RunStp26 :
+							IF abChuckClosed[iChangeStickPos] THEN
+								abNewStick[iChangeStickPos] := TRUE;
+								(* Move Z to safe *)
+								alrTargetPos[PA_Z1+iChangeStickPos] := alrSafePos[PA_Z1+iChangeStickPos];
+								aeMoveRobotCommand[PA_Z1+iChangeStickPos] := AC_MoveAtAbsPos;
+								eStickStep := SP_RunStp27;
+							END_IF
+						SP_RunStp27 :
+							IF (aTRobotAxis[PA_Z1+iChangeStickPos].eCurrentState = AS_InPosition) THEN
+								sOutTakeFromBarrel.bHasTaken := TRUE;
+								eStickStep := SP_RunStp28;
+							END_IF
+						SP_RunStp28 :
+							IF eBarrelRunStatus = RS_WaitRequest  THEN
+								IF sInTakeFromBarrel.bHasGiven THEN
+									abChangeStick[iChangeStickPos] := FALSE;
+									abSharpenStick[iChangeStickPos] := TRUE;
+									alrRemainingStickLength[iChangeStickPos] := asStickData[iChangeStickPos].lrTotalLength;
+									eStickStep := SP_RunStp20;
+								ELSE
+									bStickNotTakenError := TRUE;
+									abSpindleError[iChangeStickPos] := TRUE;
+									abOpenChuck[iChangeStickPos] := TRUE;
+									eStickStep := SP_RunStp1;  (*Error *)
+								END_IF
+							END_IF
+						SP_RunStp50 : (* Sharpen [parallel]*)
+							IF (eSharpenRunStatus =  RS_WaitRequest) THEN
+								FOR iSide := 0 TO 1 DO
+									(* Stop motors *)
+									abStartPearlingMotor[iSide] := FALSE;
+									(* Move Z to safe *)
+									alrTargetPos[PA_Z1+iSide] := alrSafePos[PA_Z1+iSide];
+									aeMoveRobotCommand[PA_Z1+iSide] := AC_MoveAtAbsPos;
+								END_FOR
+								eStickStep := SP_RunStp51;
+							END_IF
+						SP_RunStp51 :
+							IF (aTRobotAxis[PA_Z1].eCurrentState = AS_InPosition) AND
+									(aTRobotAxis[PA_Z2].eCurrentState = AS_InPosition) THEN
+								alrTargetPos[PA_X] := alrRobotPos[PA_X,PTP_Sharpen];
+								alrTargetPos[PA_Y] := alrRobotPos[PA_Y,PTP_Sharpen];
+								aeMoveRobotCommand[PA_X] := AC_MoveAtAbsPos;
+								aeMoveRobotCommand[PA_Y] := AC_MoveAtAbsPos;
+								eStickStep := SP_RunStp52;
+							END_IF
+						SP_RunStp52 :
+							IF (eRobotXYStatus = AS_InPosition)  THEN
+								(* Move Z to sharpen pos if needed*)
+								FOR iSide := 0 TO 1 DO
+									IF abSharpenStick[iSide]  AND abUseSpindle[iSide] THEN
+										(* After sharpening, pearling correction must be recalculated *)
+										alrCorrectionMCR[iSide] := 0;
+										IF abNewStick[iSide] THEN
+											alrTargetPos[PA_Z1+iSide] := alrRobotPos[PA_Z1+iSide,PTP_Sharpen] - lrStickOutAfterChange - 0.5;
+										ELSE
+											alrTargetPos[PA_Z1+iSide] := alrRobotPos[PA_Z1+iSide,PTP_Sharpen] - lrSharpenPosOffset - asStickData[iSide].lrOutLength;
+										END_IF
+										aeMoveRobotCommand[PA_Z1+iSide] := AC_MoveAtAbsPos;
+									END_IF
+								END_FOR
+								alrCurrentSpeed := alrMaxRobotSpeed;
+								eStickStep := SP_RunStp53;
+							END_IF
+						SP_RunStp53 :
+							IF (aTRobotAxis[PA_Z1].eCurrentState = AS_InPosition) AND
+									(aTRobotAxis[PA_Z2].eCurrentState = AS_InPosition) THEN
+								FOR iSide := 0 TO 1 DO
+									IF abSharpenStick[iSide]  AND abUseSpindle[iSide] THEN
+										IF NOT abNewStick[iSide] THEN
+											alrProbingLimit[iSide] :=  alrRobotPos[PA_Z1+iSide,PTP_Sharpen] + 0.5;
+											abDoProbing[iSide] := TRUE;
+											abRetryProbing[iSide] := FALSE;
+										END_IF
+										aeProbingArea[iSide] := PA_BeforeSharpen;
+									END_IF
+								END_FOR
+								eStickStep := SP_RunStp54;
+							END_IF
+						SP_RunStp54 :
+							IF (abProbingDone[PH_Left] OR NOT abSharpenStick[PH_Left] OR NOT abUseSpindle[PH_Left] OR abNewStick[PH_Left]) AND (abProbingDone[PH_Right] OR NOT abSharpenStick[PH_Right] OR  NOT abUseSpindle[PH_Right] OR abNewStick[PH_Right]) THEN
+								FOR iSide := 0 TO 1 DO
+									abDoProbing[iSide] := FALSE;
+									(* We have the right position, calculate stick use *)
+									IF abSharpenStick[iSide]   AND abUseSpindle[iSide] THEN
+										IF abNewStick[iSide] THEN
+											alrRemainingStickLength[iSide] := asStickData[iSide].lrTotalLength;
+										ELSE
+											IF (alrProbingPos[iSide] - alrLastProbingPos[iSide]) > (asStickData[iSide].lrOutLength -0.5) THEN
+												alrRemainingStickLength[iSide] := sStickDataShared.sStickDataMMIShared.lrMinHoldLength;
+											ELSE
+												alrRemainingStickLength[iSide] := alrRemainingStickLength[iSide] - (alrProbingPos[iSide] - alrLastProbingPos[iSide]);
+											END_IF
+										END_IF
+										(* Check if it is the first probing after stick change *)
+										IF (alrRemainingStickLength[iSide] > asStickData[iSide].lrTotalLength) THEN
+											alrRemainingStickLength[iSide] := asStickData[iSide].lrTotalLength;
+										END_IF
+										(* Check if the stick is not too short *)
+										IF (alrRemainingStickLength[iSide] < (sStickDataShared.sStickDataMMIShared.lrMinHoldLength + asStickData[iSide].lrOutLength)) THEN
+											(* We must change the stick *)
+											abChangeStick[iSide] := TRUE;
+											abSharpenStick[iSide] := FALSE;
+											eStickStep := SP_RunStp1;
+										END_IF
+									END_IF
+								END_FOR
+								IF (eStickStep = SP_RunStp1) THEN
+									(* In parallel pearling, we must change both stick *)
+									IF bParallelProduction THEN
+										FOR iSide:=0 TO 1 DO
+											abChangeStick[iSide] := TRUE;
+											abSharpenStick[iSide] := FALSE;
+										END_FOR
+									END_IF
+								ELSE
+									FOR iSide := 0 TO 1 DO
+										IF abSharpenStick[iSide]   AND abUseSpindle[iSide] AND NOT abNewStick[iSide] THEN
+											alrTargetPos[PA_Z1+iSide] := alrTargetPos[PA_Z1+iSide] - 0.5;
+											aeMoveRobotCommand[PA_Z1+iSide] := AC_MoveAtAbsPos;
+										END_IF
+									END_FOR
+									eStickStep := SP_RunStp55;
+								END_IF
+							END_IF
+						SP_RunStp55 :
+							IF (aTRobotAxis[PA_Z1].eCurrentState = AS_InPosition) AND
+								(aTRobotAxis[PA_Z2].eCurrentState = AS_InPosition) THEN
+								FOR iSide := 0 TO 1 DO
+									IF   abUseSpindle[iSide] AND abSharpenStick[iSide] THEN
+										(* Open chuck *)
+										abOpenChuck[iSide] := TRUE;
+									END_IF
+								END_FOR
+								TWaitChuckOpen(IN := FALSE);
+								eStickStep := SP_RunStp56;
+							END_IF
+						SP_RunStp56 :
+							TWaitChuckOpen(IN := (abChuckOpened[PH_Left] OR NOT abOpenChuck[PH_Left] OR NOT abUseSpindle[PH_Left]) AND (abChuckOpened[PH_Right] OR NOT abOpenChuck[PH_Right] OR NOT abUseSpindle[PH_Right]),PT := T#400MS);   // Valeur de départ ==> PT := t#1s
+							FOR iSide := 0 TO 1 DO
+								IF abUseSpindle[iSide] AND abSharpenStick[iSide] THEN
+									abActivateEject[iSide] := abChuckOpened[iSide] AND abOpenChuck[iSide];
+									IF  TWaitChuckOpen.Q THEN
+										(* Move Z to out position *)
+										alrCurrentSpeed := alrMaxRobotSpeed;
+										alrTargetPos[PA_Z1+iSide] := alrRobotPos[PA_Z1+iSide,PTP_Sharpen]- asStickData[iSide].lrOutLength - alrSharpenTeachZOffset;
+										aeMoveRobotCommand[PA_Z1+iSide] := AC_MoveAtAbsPos;
+										//eStickStep := SP_RunStp57;		// HFO : Supprimer la correction avec capteur step 57, 58, 24.11.2021
+										eStickStep := SP_RunStp59;
+									END_IF
+								END_IF
+							END_FOR
+						SP_RunStp57:
+							IF (aTRobotAxis[PA_Z1].eCurrentState = AS_InPosition) AND
+								(aTRobotAxis[PA_Z2].eCurrentState = AS_InPosition) THEN
+								TWaitHeadStab(IN := FALSE);
+								eStickStep := SP_RunStp58;
+							END_IF
+						SP_RunStp58:
+							TWaitHeadStab(IN := TRUE, PT := T#150MS);	// Valeur de départ ==> PT := t#500ms
+							IF TWaitHeadStab.Q THEN
+								FOR iSide := 0 TO 1 DO
+									IF abUseSpindle[iSide] AND abSharpenStick[iSide] THEN
+										alrTargetPos[PA_Z1+iSide] := alrTargetPos[PA_Z1+iSide] + (aiContactDistance[iSide] - aiContactThresholdArea[iSide , aeProbingArea[iSide]])/alrSensorRate[iSide] - alrChuckRetractOffset[iSide];
+										aeMoveRobotCommand[PA_Z1+iSide] := AC_MoveAtAbsPos;
+									END_IF
+								END_FOR
+								eStickStep := SP_RunStp59;
+							END_IF
+						SP_RunStp59:
+							IF (aTRobotAxis[PA_Z1].eCurrentState = AS_InPosition) AND
+									(aTRobotAxis[PA_Z2].eCurrentState = AS_InPosition) THEN
+								TWaitHeadStab(IN := FALSE);
+								eStickStep := SP_RunStp60;
+							END_IF
+						SP_RunStp60:
+							TWaitHeadStab(IN := TRUE, PT := T#400MS);	// Valeur de départ ==> PT := t#500ms
+							IF TWaitHeadStab.Q THEN
+								eStickStep := SP_RunStp61;
+							END_IF
+						SP_RunStp61 :
+							IF (aTRobotAxis[PA_Z1].eCurrentState = AS_InPosition) AND
+									(aTRobotAxis[PA_Z2].eCurrentState = AS_InPosition) THEN
+								(* Close chuck if needed*)
+								FOR iSide := 0 TO 1 DO
+									IF abUseSpindle[iSide] AND abSharpenStick[iSide] THEN
+										abOpenChuck[iSide] := FALSE;
+									END_IF
+								END_FOR
+								IF (abChuckClosed[PH_Left]  OR abOpenChuck[PH_Left] OR NOT abUseSpindle[PH_Left]) AND (abChuckClosed[PH_Right] OR abOpenChuck[PH_Right] OR NOT abUseSpindle[PH_Right]) THEN
+									FOR iSide := 0 TO 1 DO
+										IF abUseSpindle[iSide] AND abSharpenStick[iSide] THEN
+											(* Retract ejector *)
+											abActivateEject[iSide] := FALSE;
+											(* Do probing *)
+											alrTargetPos[PA_Z1+iSide] := alrTargetPos[PA_Z1+iSide];
+(* DLA : Remove -1mm for optimisation 											alrTargetPos[PA_Z1+iSide] := alrTargetPos[PA_Z1+iSide] - 1;*)
+											alrProbingLimit[iSide] :=  alrRobotPos[PA_Z1+iSide,PTP_Sharpen] - 0.5;
+											abDoProbing[iSide] := TRUE;
+											abRetryProbing[iSide] := FALSE;
+											aeProbingArea[iSide] := PA_AfterSharpen;
+										END_IF
+									END_FOR
+									eStickStep := SP_RunStp62;
+								END_IF
+							END_IF
+						SP_RunStp62 :
+							IF (abProbingDone[PH_Left] OR NOT abSharpenStick[PH_Left]  OR NOT abUseSpindle[PH_Left]) AND (abProbingDone[PH_Right] OR NOT abSharpenStick[PH_Right] OR NOT abUseSpindle[PH_Right]) THEN
+								alrCurrentSpeed := alrMaxRobotSpeed;
+								FOR iSide := 0 TO 1 DO
+									IF abUseSpindle[iSide] AND abSharpenStick[iSide] THEN
+										alrLastProbingPos[iSide] := alrProbingPos[iSide];
+										alrSharpenProbing[iSide] := alrProbingPos[iSide];
+										alrStickCorrection[iSide] := alrRobotPos[PA_Z1+iSide,PTP_Sharpen]  - alrProbingPos[iSide] - asStickData[iSide].lrOutLength - alrSharpenTeachZOffset;
+										(* Move down to sharpen end position*)
+										alrTargetPos[PA_Z1+iSide] := alrProbingPos[iSide] - 0.1;
+										aeMoveRobotCommand[PA_Z1+iSide] := AC_MoveAtAbsPos;
+										(* Check if there is a risk for the spindle or stick is stuck in the chuck*)
+										IF (alrProbingPos[iSide] > ( alrRobotPos[PA_Z1+iSide,PTP_Sharpen] - (asStickData[iSide].lrOutLength - 0.5))) THEN
+											abChangeStick[iSide] := TRUE;
+											bSecurityError := TRUE;
+											iDebugPos := 3;
+											iDebugSide := iSide;
+										END_IF
+									END_IF
+								END_FOR
+								IF bSecurityError THEN
+									aeMoveRobotCommand[PA_Z1] := AC_None;
+									aeMoveRobotCommand[PA_Z2] := AC_None;
+								ELSE
+									bAspirationSharpenOn := TRUE;
+									eStickStep := SP_RunStp63;
+								END_IF
+							END_IF
+						SP_RunStp63 :
+							IF (aTRobotAxis[PA_Z1].eCurrentState = AS_InPosition) AND
+									(aTRobotAxis[PA_Z2].eCurrentState = AS_InPosition) THEN
+								IF bUseFullTapeWidth THEN
+									(* Move to start position *)
+									alrCurrentSpeed := alrMaxRobotSpeed;
+									alrTargetPos[PA_Y] := alrRobotPos[PA_Y,PTP_Sharpen] - lrCenterSharpningOffset - lrSharpeningDelta;
+									aeMoveRobotCommand[PA_Y] := AC_MoveAtAbsPos;
+								END_IF
+								yMCRChannel := 1;
+								eStickStep := SP_RunStp64;
+							END_IF
+						SP_RunStp64 :
+							eMCRCommand := MCRC_SetSpeed;
+							TMCRDrv.iSpeedSetpoint :=  sStickDataShared.sStickDataMMIShared.iMCRSharpenSpeed;
+							eStickStep := SP_RunStp65;
+						SP_RunStp65 :
+							IF bMCRReady THEN
+								IF yMCRChannel = 1 THEN
+									yMCRChannel := 2;
+									eStickStep := SP_RunStp64;
+								ELSE
+									yMCRChannel := 1;
+									eStickStep := SP_RunStp66;
+								END_IF
+							END_IF
+						SP_RunStp66:
+							(* Wait XY in start position *)
+							IF (eRobotXYStatus = AS_InPosition) THEN
+								FOR iSide := 0 TO 1 DO
+									IF abUseSpindle[iSide] AND abSharpenStick[iSide] THEN
+										abStartPearlingMotor[iSide] := TRUE;
+									END_IF
+								END_FOR
+								IF  (aTWaitMotorStarted[PH_Left].Q OR NOT abSharpenStick[PH_Left] OR NOT abUseSpindle[PH_Left]) AND (aTWaitMotorStarted[PH_Right].Q OR NOT abSharpenStick[PH_Right] OR NOT abUseSpindle[PH_Right])   THEN
+									FOR iSide := 0 TO 1 DO
+										IF abUseSpindle[iSide] AND abSharpenStick[iSide] THEN
+											abDoProbing[iSide] := FALSE;
+											(* Move down to sharpen end position*)
+											IF abNewStick[iSide] THEN
+												alrTargetPos[PA_Z1+iSide] := alrTargetPos[PA_Z1+iSide] + 0.2 +0.05;
+											ELSE
+												alrTargetPos[PA_Z1+iSide] := alrTargetPos[PA_Z1+iSide] + sStickDataShared.sStickDataMMIShared.lrSharpenHeight+0.05;
+											END_IF
+											aeMoveRobotCommand[PA_Z1+iSide] := AC_MoveAtAbsPos;
+											abNewStick[iSide] := FALSE;
+										END_IF
+									END_FOR
+									alrCurrentSpeed := alrMaxRobotSpeed;
+									iNbOfFwBwSharpen := 0;
+									iNbOfFwBwSharpenBeforeMove := 0;
+									eStickStep := SP_RunStp67;
+								END_IF
+							END_IF
+						SP_RunStp67 :
+							IF  (aTRobotAxis[PA_Z1].eCurrentState = AS_InPosition) AND (aTRobotAxis[PA_Z2].eCurrentState = AS_InPosition) THEN
+								(* Reduce speed for sharpening *)
+								alrCurrentSpeed[PA_Y] := sStickDataShared.sStickDataMMIShared.lrSharpenSpeed;
+								eStickStep := SP_RunStp68;
+							END_IF
+						SP_RunStp68 :
+							(* Do sharpening *)
+							IF (eRobotXYStatus = AS_InPosition) THEN
+								iNbOfFwBwSharpen := iNbOfFwBwSharpen+1;
+								iNbOfFwBwSharpenBeforeMove := iNbOfFwBwSharpenBeforeMove + 1;
+								(* Check if sharpen is finished *)
+								IF (iNbOfFwBwSharpen >  sStickDataShared.sStickDataMMIShared.iNbOfFwBwSharpen) THEN
+									eStickStep := SP_RunStp71;
+								ELSE
+									eStickStep := SP_RunStp69;
+									IF bUseFullTapeWidth THEN
+										IF iNbOfFwBwSharpen = 1 THEN
+											alrTargetPos[PA_Y] := alrRobotPos[PA_Y,PTP_Sharpen] - lrCenterSharpningOffset - lrSharpeningDelta;
+											eStickStep := SP_RunStp80;
+										ELSE
+											alrTargetPos[PA_Y] := alrRobotPos[PA_Y,PTP_Sharpen] - lrCenterSharpningOffset;
+										END_IF
+									ELSE
+										alrTargetPos[PA_Y] := alrRobotPos[PA_Y,PTP_Sharpen] - lrCenterSharpningOffset + lrSharpeningDelta;
+									END_IF
+									aeMoveRobotCommand[PA_Y] := AC_MoveAtAbsPos;
+								END_IF
+							END_IF
+						SP_RunStp69 :
+							(* Do sharpening *)
+							IF (eRobotXYStatus = AS_InPosition) THEN
+								eStickStep := SP_RunStp68;
+								IF (iNbOfFwBwSharpenBeforeMove >= sStickDataShared.sStickDataMMIShared.iNbOfFwBwBeforeTapeMove) OR
+											(iNbOfFwBwSharpen = sStickDataShared.sStickDataMMIShared.iNbOfFwBwSharpen) THEN
+									IF bUseFullTapeWidth THEN
+										(* Move on clean tape part *)
+										alrTargetPos[PA_Y] := alrRobotPos[PA_Y,PTP_Sharpen] - lrCenterSharpningOffset + lrSharpeningDelta;
+										aeMoveRobotCommand[PA_Y] := AC_MoveAtAbsPos;
+									ELSE
+										(* Move Sharpen Tape*)
+										eSharpenRunCmd := RCS_MoveStep;
+										eStickStep := SP_RunStp70;
+									END_IF
+									iNbOfFwBwSharpenBeforeMove := 0;
+								ELSIF bUseFullTapeWidth THEN
+									(* Move BW *)
+									alrTargetPos[PA_Y] := alrRobotPos[PA_Y,PTP_Sharpen] - lrCenterSharpningOffset - lrSharpeningDelta;
+									aeMoveRobotCommand[PA_Y] := AC_MoveAtAbsPos;
+								END_IF
+							END_IF
+						SP_RunStp70 :
+							IF eSharpenRunStatus =  RS_WaitRequest THEN
+								alrTargetPos[PA_Y] := alrRobotPos[PA_Y,PTP_Sharpen];
+								aeMoveRobotCommand[PA_Y] := AC_MoveAtAbsPos;
+								eStickStep := SP_RunStp68;
+							END_IF
+						SP_RunStp71 :
+							(* End of  sharpening *)
+							IF (eRobotXYStatus = AS_InPosition) THEN
+								IF bUseFullTapeWidth THEN
+									(* Move Sharpen Tape*)
+									eSharpenRunCmd := RCS_MoveStep;
+								END_IF
+								(* Take maximal speed *)
+								alrCurrentSpeed := alrMaxRobotSpeed;
+								(* Move Z to safe *)
+								alrTargetPos[PA_Z1] := alrSafePos[PA_Z1];
+								alrTargetPos[PA_Z2] := alrSafePos[PA_Z2];
+								aeMoveRobotCommand[PA_Z1] := AC_MoveAtAbsPos;
+								aeMoveRobotCommand[PA_Z2] := AC_MoveAtAbsPos;
+								eStickStep := SP_RunStp72;
+							END_IF
+						SP_RunStp72:
+							IF (aTRobotAxis[PA_Z1].eCurrentState = AS_InPosition) AND
+									(aTRobotAxis[PA_Z2].eCurrentState = AS_InPosition) THEN
+								bAspirationSharpenOn := FALSE;
+								yMCRChannel := 1;
+								eStickStep := SP_RunStp73;
+							END_IF
+						SP_RunStp73 :
+							eMCRCommand := MCRC_SetSpeed;
+							TMCRDrv.iSpeedSetpoint := sRunData.sPearlingData.iMCRSpeed;
+							eStickStep := SP_RunStp74;
+						SP_RunStp74 :
+							IF bMCRReady THEN
+								IF yMCRChannel = 1 THEN
+									yMCRChannel := 2;
+									eStickStep := SP_RunStp73;
+								ELSE
+									yMCRChannel := 1;
+									eStickStep := SP_RunStp76;
+								END_IF
+							END_IF
+						SP_RunStp76:
+							IF  (aTWaitMotorStarted[PH_Left].Q OR NOT abSharpenStick[PH_Left] OR NOT abUseSpindle[PH_Left]) AND (aTWaitMotorStarted[PH_Right].Q OR NOT abSharpenStick[PH_Right] OR NOT abUseSpindle[PH_Right])   THEN
+								FOR iSide := 0 TO 1 DO
+									IF abUseSpindle[iSide] AND abSharpenStick[iSide] THEN
+										aiNbOfPearlsDone[iSide] := 0;
+										abSharpenStick[iSide] := FALSE;
+									END_IF
+								END_FOR
+								eStickStep := SP_RunStp1;
+							END_IF
+						SP_RunStp80 :
+							(* Optimised case for using full tape and 1 FwBw *)
+							IF (eRobotXYStatus = AS_InPosition) THEN
+								alrTargetPos[PA_Y] := alrRobotPos[PA_Y,PTP_Sharpen] - lrCenterSharpningOffset + lrSharpeningDelta;
+								aeMoveRobotCommand[PA_Y] := AC_MoveAtAbsPos;
+								eStickStep := SP_RunStp68;
+							END_IF
+					END_CASE
+(*----------------- Run ------------------*)
+					CASE sCurrentState.eStep OF
+						SP_RunStp1 :
+							eRunStatus := RS_WaitRequest;
+							CASE eRunCommand OF
+								RCP_None:
+									IF ((NOT abChangeStick[PH_Left] AND NOT abSharpenStick[PH_Left])  OR NOT abUseSpindle[PH_Left]) AND
+										((NOT abChangeStick[PH_Right] AND NOT abSharpenStick[PH_Right])  OR NOT abUseSpindle[PH_Right]) THEN
+										IF bStopReq  THEN
+											sCurrentState.eStatus := MS_Ready;
+										ELSIF bPauseReq  THEN
+											sCurrentState.eStatus := MS_Paused;
+										END_IF
+									END_IF
+								RCP_Pearl:
+									sCurrentState.eStep := SP_RunStp2;
+								RCP_CheckSharpen:
+									sCurrentState.eStep := SP_RunStp210;
+								RCP_ChangeChuck:
+									sCurrentState.eStep := SP_RunStp200;
+							END_CASE
+							IF sCurrentState.eStep<> SP_RunStp1 THEN eRunStatus := RS_ProcessRequest1; END_IF
+						SP_RunStp2:(* Pearling startup *)
+							(* wait until all sharpening is finish for current used head*)
+							IF ((NOT abChangeStick[PH_Left] AND NOT abSharpenStick[PH_Left])  OR NOT abUseSpindle[PH_Left]) AND
+								((NOT abChangeStick[PH_Right] AND NOT abSharpenStick[PH_Right])  OR NOT abUseSpindle[PH_Right]) THEN
+									alrCurrentSpeed[PA_Z1] := alrMaxRobotSpeed[PA_Z1];
+									alrCurrentSpeed[PA_Z2] := alrMaxRobotSpeed[PA_Z2];
+									sCurrentState.bWaitStep := TRUE;
+									sCurrentState.eStep := SP_RunStp3;
+							END_IF
+						SP_RunStp3: (* it's now safe to switch head used *)
+							abUseSpindle := sRunData.abUseSpindle;
+							FOR iSide:=0 TO 1 DO
+								IF (NOT abChuckClosed[iSide] OR abNeedChangeStick[iSide]) AND abUseSpindle[iSide] THEN
+									abNeedChangeStick[iSide] := FALSE;
+									abChangeStick[iSide] := TRUE;
+								END_IF
+							END_FOR
+							sCurrentState.eStep := SP_RunStp4;
+						SP_RunStp4 :
+							IF ((NOT abChangeStick[PH_Left] AND NOT abSharpenStick[PH_Left])  OR NOT abUseSpindle[PH_Left]) AND
+								((NOT abChangeStick[PH_Right] AND NOT abSharpenStick[PH_Right])  OR NOT abUseSpindle[PH_Right]) THEN
+									alrCurrentSpeed[PA_Z1] := alrMaxRobotSpeed[PA_Z1];
+									alrCurrentSpeed[PA_Z2] := alrMaxRobotSpeed[PA_Z2];
+									sCurrentState.eStep := SP_RunStp5;
+							END_IF
+						SP_RunStp5 :
+							IF NOT asPearlData[PH_Left].bNewPart AND NOT asPearlData[PH_Right].bNewPart THEN
+								FOR i := 0 TO C_MAX_NB_OF_PEARLS  DO
+									aArea[i].iFirstPearl := -1;
+									aArea[i].iNbOfPearls := 0;
+								END_FOR
+								sCurrentState.eStep := SP_RunStp6;
+							END_IF
+						SP_RunStp6:
+							(* Init pearling parameter *)
+							FOR i := 1 TO UINT_TO_INT(sRunData.sPearlingData.nNbOfPearls)-1  DO
+								IF NOT sRunData.sPearlingData.aDataPerlage[i].bDisable THEN
+									iCurrentArea := sRunData.sPearlingData.aDataPerlage[i].iArea;
+									aArea[iCurrentArea].iNbOfPearls := aArea[iCurrentArea].iNbOfPearls + 1;
+									IF aArea[iCurrentArea].iFirstPearl = -1 THEN aArea[iCurrentArea].iFirstPearl := i; END_IF
+								END_IF
+							END_FOR
+							FOR iSide := 0 TO 1 DO
+								anPearlIndexDone[iSide] := 0;
+								aiCountPearlError[iSide] := 0;
+								abFirstPearl[iSide] := TRUE;
+								abNeedChangeStick[iSide] := FALSE;
+								aiPearlingLayringPos[iSide] := sRunData.iLayringPos;
+								aiPearlingLayringOffsetPos[iSide] := sRunData.iLayringOffsetPos;
+								IF abUseSpindle[iSide] THEN
+									asPearlData[iSide].bPearlingTop := (sRunData.apsPartData[iSide]^.ePartSide = PS_SUS);
+									asPearlData[iSide].bNewPart := TRUE;
+									anPearlIndexDone[iSide] := sRunData.apsPartData[iSide]^.anLastPearlIndexDone[aiSideInfo[iSide],sRunData.apsPartData[iSide]^.ePartSide];
+								END_IF
+							END_FOR
+							IF abUseSpindle[PH_Left] THEN
+								iFirstHeadUsed := 0;
+								IF abUseSpindle[PH_Right] THEN
+									aiPearlingLayringPos[PH_Right] := aiPearlingLayringPos[PH_Right] + 1;
+								END_IF
+							ELSE
+								iFirstHeadUsed := 1;
+							END_IF
+							IF eTableSideForLoader = TS_A THEN (* pearling use the other side *)
+								FOR iSide := 0 TO 1 DO
+									aiPearlingLayringPos[iSide] := aiPearlingLayringPos[iSide] + 2;
+								END_FOR
+							END_IF
+							nPearlIndex := anPearlIndexDone[PH_Left] + 1;
+							IF anPearlIndexDone[PH_Right] + 1 < nPearlIndex THEN nPearlIndex := anPearlIndexDone[PH_Right] + 1; END_IF
+							IF nPearlIndex < 1 THEN nPearlIndex := 1; END_IF
+							iCurrentArea := -1; (* Force check of sharpening *)
+							FOR iSide := 0 TO 1 DO
+								IF abUseSpindle[iSide] THEN
+									abAspirationPearling[aiPearlingLayringPos[iSide]  MOD 2] := TRUE;
+								END_IF
+								abTakeZRef[iSide] := NOT abZRefTaken[aiPearlingLayringPos[iSide], aiPearlingLayringOffsetPos[iSide], iSide] AND abUseSpindle[iSide];
+								IF bForceProbing THEN
+									abTakeZRef[iSide]:= abUseSpindle[iSide];
+									abStartPearlingMotor[iSide] := FALSE;
+								 END_IF
+							END_FOR
+							(* First move Z to safe *)
+							alrTargetPos[PA_Z1] := alrSafePos[PA_Z1];
+							alrTargetPos[PA_Z2] := alrSafePos[PA_Z2];
+							aeMoveRobotCommand[PA_Z1] := AC_MoveAtAbsPos;
+							aeMoveRobotCommand[PA_Z2] := AC_MoveAtAbsPos;
+							sCurrentState.eStep := SP_RunStp7;
+						SP_RunStp7:
+							IF (aTRobotAxis[PA_Z1].eCurrentState = AS_InPosition) AND
+									(aTRobotAxis[PA_Z2].eCurrentState = AS_InPosition) THEN
+								IF (aiPearlingLayringPos[iFirstHeadUsed] > 1) THEN (* Handle offset for table Side A/B *)
+									aiPearlingTeachedPos[PH_Left] := PTP_TableSideBPosZ1;
+									aiPearlingTeachedPos[PH_Right] := PTP_TableSideBPosZ2;
+								ELSE
+									aiPearlingTeachedPos[PH_Left] := PTP_TableSideAPosZ1;
+									aiPearlingTeachedPos[PH_Right] := PTP_TableSideAPosZ2;
+								END_IF
+								IF abUseSpindle[PH_Left] THEN (* Handle offset for head *)
+									alrPearlingOffset[PA_X] := alrRobotPos[PA_X,aiPearlingTeachedPos[PH_Left]];
+									alrPearlingOffset[PA_Y] := alrRobotPos[PA_Y,aiPearlingTeachedPos[PH_Left]];
+								ELSE
+									alrPearlingOffset[PA_X] := alrRobotPos[PA_X,aiPearlingTeachedPos[PH_Right]];
+									alrPearlingOffset[PA_Y] := alrRobotPos[PA_Y,aiPearlingTeachedPos[PH_Right]];
+								END_IF
+								FOR iSide := 0 TO 1 DO
+									alrPearlingOffset[PA_Z1+iSide] :=  alrRobotPos[PA_Z1+iSide,aiPearlingTeachedPos[iSide]];
+								END_FOR
+
+								IF ((aiPearlingLayringPos[iFirstHeadUsed] MOD 2 )= 0) THEN (* Handle offset for layring*)
+									alrPearlingOffset[PA_X] := alrPearlingOffset[PA_X] - lrLayeringCenterOffsetXTable/2;
+								ELSE
+									alrPearlingOffset[PA_X] := alrPearlingOffset[PA_X] + lrLayeringCenterOffsetXTable/2;
+								END_IF
+								alrPearlingOffset[PA_Y] := alrPearlingOffset[PA_Y] + lrLayeringCenterOffsetYTable;
+								TLayeringCenter.lrX := alrPearlingOffset[PA_X];
+								TLayeringCenter.lrY := alrPearlingOffset[PA_Y];
+								IF aiPearlingLayringOffsetPos[iFirstHeadUsed] > 0 THEN (* Handle offset for Part on layring*)
+									alrPearlingOffset[PA_X] := alrPearlingOffset[PA_X] + sPartData.alrPartOffsetLayering[PH_Right].lrX;
+									alrPearlingOffset[PA_Y] := alrPearlingOffset[PA_Y] + sPartData.alrPartOffsetLayering[PH_Right].lrY;
+								ELSE
+									alrPearlingOffset[PA_X] := alrPearlingOffset[PA_X] + sPartData.alrPartOffsetLayering[PH_Left].lrX;
+									alrPearlingOffset[PA_Y] := alrPearlingOffset[PA_Y] + sPartData.alrPartOffsetLayering[PH_Left].lrY;
+								END_IF
+								(*Check if a pearl is outside of pearling area on layering *)
+								FOR nPearl:=0 TO sRunData.sPearlingData.nNbOfPearls - 1 DO
+									IF NOT sRunData.sPearlingData.aDataPerlage[nPearl].bDisable THEN
+										TPearlPosition.lrX := alrPearlingOffset[PA_X]  + sRunData.sPearlingData.aDataPerlage[nPearl].lrX *alrPearlingInvert[PA_X];
+										TPearlPosition.lrY := alrPearlingOffset[PA_Y]  + sRunData.sPearlingData.aDataPerlage[nPearl].lrY *alrPearlingInvert[PA_Y];
+										lrRadius := SQRT(EXPT(TPearlPosition.lrX - TLayeringCenter.lrX , 2) + EXPT(TPearlPosition.lrY - TLayeringCenter.lrY, 2));
+										IF (lrRadius > lrSecurityRadius) THEN
+											bSecurityError := TRUE;
+											iDebugPos := 4;
+											iDebugSide := -1;
+											EXIT;
+										END_IF
+									END_IF
+								END_FOR
+								FOR iSide := 0 TO 1 DO
+									aePearlingArea[iSide] := PA_PartLayering1Offset0 + aiPearlingLayringPos[iSide] * 2 + aiPearlingLayringOffsetPos[iSide];
+								END_FOR
+								alrTargetPos[PA_X] := alrPearlingOffset[PA_X];
+								alrTargetPos[PA_Y] := alrPearlingOffset[PA_Y];
+								aeMoveRobotCommand[PA_X] := AC_MoveAtAbsPos;
+								aeMoveRobotCommand[PA_Y] := AC_MoveAtAbsPos ;
+								IF abTakeZRef[PH_Left] OR abTakeZRef[PH_Right] THEN
+									(* Do referencing on part *)
+									sCurrentState.eStep := SP_RunStp30;
+								ELSE
+									(* Do Pearling *)
+									(*abStartPearlingMotor[PH_Left] := TRUE;			// TODO : HFO, problem sometimes when one spindle (spindle 1???) need probing and take ref on part, second spindle don't run
+									abStartPearlingMotor[PH_Right] := TRUE;*)
+									abUseSpindle[PH_Left] := TRUE;
+									abUseSpindle[PH_Right] := TRUE;
+									sCurrentState.eStep := SP_RunStp10;
+								END_IF
+							END_IF
+						SP_RunStp10 :
+							IF (eRobotXYStatus = AS_InPosition) THEN
+								yMCRChannel := 1;
+								sCurrentState.eStep := SP_RunStp11;
+							END_IF
+						SP_RunStp11 :
+							(* Do spindle heat on if needed *)
+							TMCRDrv.iSpeedSetpoint := iHeatOnSpeed;;
+							eMCRCommand := MCRC_SetSpeed;
+							sCurrentState.eStep := SP_RunStp12;
+						SP_RunStp12 :
+							IF bMCRReady THEN
+								IF yMCRChannel = 1 THEN
+									yMCRChannel := 2;
+									sCurrentState.eStep := SP_RunStp11;
+								ELSE
+									sCurrentState.eStep := SP_RunStp13;
+								END_IF
+							END_IF
+						SP_RunStp13 :
+							abStartPearlingMotor[PH_Left] := abNeedSpindleHeatOn[PH_Left];
+							abStartPearlingMotor[PH_Right] := abNeedSpindleHeatOn[PH_Right];
+							IF (NOT abNeedSpindleHeatOn[PH_Left] AND NOT abNeedSpindleHeatOn[PH_Right]) THEN
+								yMCRChannel := 1;
+								sCurrentState.eStep := SP_RunStp21;
+							END_IF
+						SP_RunStp21 :
+							eMCRCommand := MCRC_SetSpeed;
+							TMCRDrv.iSpeedSetpoint := sRunData.sPearlingData.iMCRSpeed;
+							sCurrentState.eStep := SP_RunStp22;
+						SP_RunStp22 :
+							IF bMCRReady THEN
+								IF yMCRChannel = 1 THEN
+									yMCRChannel := 2;
+									sCurrentState.eStep := SP_RunStp21;
+								ELSE
+									yMCRChannel := 1;
+									sCurrentState.eStep := SP_RunStp23;
+								END_IF
+							END_IF
+						SP_RunStp23 :
+							FOR iSide:=0 TO 1 DO
+								abSpindleCurrentOk[iSide] := bBypassMCR;
+							END_FOR
+							TWaitCurrentMotorBeltOk(IN :=FALSE);
+							TWaitCurrentMotorWarmOk(IN :=FALSE);
+							sCurrentState.eStep := SP_RunStp24;
+						SP_RunStp24:
+							IF (aTWaitMotorStarted[0].Q OR NOT abUseSpindle[PH_Left]) AND
+									(aTWaitMotorStarted[1].Q OR NOT abUseSpindle[PH_Right]) THEN
+								IF abSpindleCurrentOk[0] AND abSpindleCurrentOk[1] THEN
+									(* Ready to pearl *)
+									sCurrentState.eStep := SP_RunStp40;
+								ELSE
+									(* Pearling can start when current is OK *)
+									eMCRCommand := MCRC_GetStatus;
+									sCurrentState.eStep := SP_RunStp25;
+								END_IF
+							END_IF
+						SP_RunStp25 : (* Checking spindle current is in range *)
+							TWaitCurrentMotorBeltOk(IN :=TRUE,PT := T#5S);
+							TWaitCurrentMotorWarmOk(IN :=TRUE,PT := t#10s);
+							IF bMCRReady THEN
+								// Check status flags
+								FOR iSide:=0 TO 1 DO
+									IF abUseSpindle[iSide] THEN
+										IF TMCRDrv.ayChannelStatus[iSide].1 THEN
+											(* Motor belt is ok *)
+											IF NOT (TMCRDrv.ayChannelStatus[iSide].3 OR TMCRDrv.ayChannelStatus[iSide].4) THEN
+												(* Motor is warm but not over limit *)
+												abSpindleCurrentOk[iSide] := TRUE;
+											ELSIF TWaitCurrentMotorWarmOk.Q THEN
+												IF  TMCRDrv.ayChannelStatus[iSide].4 THEN
+													(* Motor is not warm *)
+													abCurrentReadError[iSide] := TRUE;
+													iDebugSide := iSide;
+													IDebugPos := 1;
+												ELSE
+													(* Motor is warm but over limit*)
+													abSpindleCurrentOk[iSide] := TRUE;
+													abCurrentLimitWarning[iSide] := TRUE;
+													iDebugSide := iSide;
+													IDebugPos := 2;
+												END_IF
+											END_IF
+										ELSIF TWaitCurrentMotorBeltOk.Q THEN
+											(* Motor belt is not ok *)
+											abCurrentReadError[iSide] := TRUE;
+										END_IF
+									END_IF
+								END_FOR
+								(* Read current again *)
+								sCurrentState.eStep := SP_RunStp24;
+							END_IF
+						SP_RunStp30:
+							IF (aTRobotAxis[PA_Z1].eCurrentState = AS_InPosition) AND
+									(aTRobotAxis[PA_Z2].eCurrentState = AS_InPosition) THEN
+								FOR iSide := 0 TO 1 DO
+									IF sRunData.sPearlingData.iSharpenFreq = 0 AND aiNbOfPearlsDone[iSide] > 0  AND abTakeZRef[iSide] THEN
+										(* sharpen is needed before taking ref on part *)
+										abSharpenStick[iSide] := TRUE;
+									END_IF
+								END_FOR
+								sCurrentState.eStep := SP_RunStp31;
+							END_IF
+						SP_RunStp31:
+							IF ((NOT abChangeStick[PH_Left] AND NOT abSharpenStick[PH_Left])  OR NOT abUseSpindle[PH_Left]) AND
+								((NOT abChangeStick[PH_Right] AND NOT abSharpenStick[PH_Right])  OR NOT abUseSpindle[PH_Right]) THEN
+									alrCurrentSpeed[PA_Z1] := alrMaxRobotSpeed[PA_Z1];
+									alrCurrentSpeed[PA_Z2] := alrMaxRobotSpeed[PA_Z2];
+									alrTargetPos[PA_Z1] := alrSafePos[PA_Z1];
+									alrTargetPos[PA_Z2] := alrSafePos[PA_Z2];
+									aeMoveRobotCommand[PA_Z1] := AC_MoveAtAbsPos;
+									aeMoveRobotCommand[PA_Z2] := AC_MoveAtAbsPos;
+									sCurrentState.eStep := SP_RunStp32;
+							END_IF
+						SP_RunStp32:
+							(* Stop motors *)
+							abStartPearlingMotor[PH_Left] := FALSE;
+							abStartPearlingMotor[PH_Right] := FALSE;
+							(* Move to ref pearl *)
+							IF (aTRobotAxis[PA_Z1].eCurrentState = AS_InPosition) AND
+									(aTRobotAxis[PA_Z2].eCurrentState = AS_InPosition) THEN
+								alrTargetPos[PA_X] := alrPearlingOffset[PA_X]  + sRunData.sPearlingData.aDataPerlage[PH_Left].lrX *alrPearlingInvert[PA_X] ;
+								alrTargetPos[PA_Y] := alrPearlingOffset[PA_Y]  + sRunData.sPearlingData.aDataPerlage[PH_Left].lrY *alrPearlingInvert[PA_Y] ;
+								aeMoveRobotCommand[PA_X] := AC_MoveAtAbsPos;
+								aeMoveRobotCommand[PA_Y] := AC_MoveAtAbsPos;
+								sCurrentState.eStep := SP_RunStp33;
+							END_IF
+						SP_RunStp33:
+							IF (eRobotXYStatus = AS_InPosition) THEN
+								sCurrentState.bWaitStep := TRUE;
+								(* Move to pre ref for probing *)
+								FOR iSide := 0 TO 1 DO
+									IF abTakeZRef[iSide] THEN
+										alrProbingLimit[iSide] :=  alrPearlingOffset[PA_Z1+iSide] + 1.5;
+										abDoProbing[iSide] := TRUE;
+										abRetryProbing[iSide] := TRUE; (* Part can slide on the layering and stick should not slide in the chuck here, so we can restart a failed probing *)
+										aeProbingArea[iSide] := aePearlingArea[iSide];
+										alrTargetPos[PA_Z1+iSide] := alrPearlingOffset[PA_Z1+iSide]  - sPartData.lrPartAndLayeringHeight - asStickData[iSide].lrOutLength - 0.5;	// TODO: HFO, change the value, original -1
+										aeMoveRobotCommand[PA_Z1+iSide] := AC_MoveAtAbsPos;
+									END_IF
+								END_FOR
+								sCurrentState.eStep := SP_RunStp34;
+							END_IF
+						SP_RunStp34:
+							IF (abProbingDone[PH_Left] OR NOT abTakeZRef[PH_Left]) AND (abProbingDone[PH_Right] OR NOT abTakeZRef[PH_Right]) THEN
+								FOR iSide:=0 TO 1 DO
+									IF abTakeZRef[iSide] THEN
+										alrSecurityPosition[aiPearlingLayringPos[iSide], aiPearlingLayringOffsetPos[iSide], iSide] := alrProbingPos[iSide] - sRunData.sPearlingData.aDataPerlage[PH_Left].lrZ * alrPearlingInvert[PA_Z1+iSide] + sRunData.sPearlingData.lrSecurityZ * alrPearlingInvert[PA_Z1+iSide]  + asStickData[iSide].lrOutLength;
+										alrContactPosition[aiPearlingLayringPos[iSide], aiPearlingLayringOffsetPos[iSide], iSide] := alrProbingPos[iSide] - sRunData.sPearlingData.aDataPerlage[PH_Left].lrZ * alrPearlingInvert[PA_Z1+iSide];
+										alrContactStickPosition[aiPearlingLayringPos[iSide], aiPearlingLayringOffsetPos[iSide], iSide] := alrContactPosition[aiPearlingLayringPos[iSide], aiPearlingLayringOffsetPos[iSide], iSide] - alrStickCorrection[iSide];
+										alrProbingRef[aiPearlingLayringPos[iSide], aiPearlingLayringOffsetPos[iSide], iSide] := alrSharpenProbing[iSide];
+										abZRefTaken[aiPearlingLayringPos[iSide], aiPearlingLayringOffsetPos[iSide], iSide] := TRUE;
+										alrHeadContactPosition[iSide] := alrContactPosition[aiPearlingLayringPos[iSide], aiPearlingLayringOffsetPos[iSide], iSide];
+										alrPreRefPosZ[iSide] := alrHeadContactPosition[iSide] - lrSecurityPreRefPosZ;
+										alrTargetPos[PA_Z1+iSide] := alrPreRefPosZ[iSide];
+										abTakeZRef[iSide] := FALSE;
+										aeMoveRobotCommand[PA_Z1+iSide] := AC_MoveAtAbsPos;
+									END_IF
+								END_FOR
+								sCurrentState.eStep := SP_RunStp35;
+							END_IF
+						SP_RunStp35:
+							IF (aTRobotAxis[PA_Z1].eCurrentState = AS_InPosition) AND
+									(aTRobotAxis[PA_Z2].eCurrentState = AS_InPosition) THEN
+								FOR iSide:=0 TO 1 DO
+									abDoProbing[iSide] := FALSE;
+								END_FOR
+								(* First move Z to safe *)
+(*								alrTargetPos[PA_Z1] := alrSafePos[PA_Z1];
+								alrTargetPos[PA_Z2] := alrSafePos[PA_Z2];
+								aeMoveRobotCommand[PA_Z1] := AC_MoveAtAbsPos;
+								aeMoveRobotCommand[PA_Z2] := AC_MoveAtAbsPos;
+*)								sCurrentState.bWaitStep := TRUE;
+								sCurrentState.eStep := SP_RunStp7;
+							END_IF
+						SP_RunStp40:
+							(* We are ready for pearling, mark part for reject is something goes wrong *)
+							FOR iSide := 0 TO 1 DO
+								IF abUseSpindle[iSide] THEN
+									sRunData.apsPartData[iSide]^.abHasPearls[aiSideInfo[iSide],sRunData.apsPartData[iSide]^.ePartSide] := TRUE;
+								END_IF
+							END_FOR
+							sCurrentState.eStep := SP_RunStp41;
+						SP_RunStp41:
+							(* Get pearling parameter *)
+							FOR iSide:=0 TO 1 DO
+								alrHeadSecurityPosition[iSide] := alrSecurityPosition[aiPearlingLayringPos[iSide], aiPearlingLayringOffsetPos[iSide], iSide];
+								alrHeadContactPosition[iSide] := alrContactPosition[aiPearlingLayringPos[iSide], aiPearlingLayringOffsetPos[iSide], iSide];
+								alrPreRefPosZ[iSide] := alrHeadContactPosition[iSide] - lrSecurityPreRefPosZ;
+								alrHeadProbingRef[iSide] := alrProbingRef[aiPearlingLayringPos[iSide], aiPearlingLayringOffsetPos[iSide], iSide];
+								alrHeadContactStickPosition[iSide] := alrContactStickPosition[aiPearlingLayringPos[iSide], aiPearlingLayringOffsetPos[iSide], iSide];
+							END_FOR
+							sCurrentState.eStep := SP_RunStp50;
+						SP_RunStp50:
+							IF (aTRobotAxis[PA_Z1].eCurrentState = AS_InPosition) AND
+									(aTRobotAxis[PA_Z2].eCurrentState = AS_InPosition) THEN
+								bEndPearling := TRUE;
+								FOR iSide:=0 TO 1 DO
+									IF abUseSpindle[iSide] THEN
+										IF NOT sRunData.apsPartData[iSide]^.abPearlingDone[aiSideInfo[iSide],sRunData.apsPartData[iSide]^.ePartSide] THEN
+											bEndPearling := FALSE;
+										END_IF
+									END_IF
+								END_FOR
+								IF bEndPearling THEN
+									(* End of pearling *)
+									sCurrentState.eStep := SP_RunStp80;
+								END_IF
+								WHILE( sCurrentState.eStep = SP_RunStp50) DO
+									IF (nPearlIndex < sRunData.sPearlingData.nNbOfPearls) THEN
+										(* Continue with next pearl *)
+										IF sRunData.sPearlingData.aDataPerlage[nPearlIndex].bDisable THEN
+											nPearlIndex := nPearlIndex + 1;
+										ELSE
+											sCurrentState.bWaitStep := TRUE;
+											sCurrentState.eStep := SP_RunStp51;
+										END_IF
+									ELSE
+										(* End of pearling *)
+										sCurrentState.eStep := SP_RunStp80;
+									END_IF
+								END_WHILE
+							END_IF
+						SP_RunStp51:
+							(* Check if a sharpen is needed *)
+							FOR iSide:=0 TO 1 DO
+								abNeedSharpening[iSide] := FALSE;
+							END_FOR
+							IF (iCurrentArea <> sRunData.sPearlingData.aDataPerlage[nPearlIndex].iArea) THEN
+								(* We change area, check if we can do the entire area without sharpening *)
+								iCurrentArea := sRunData.sPearlingData.aDataPerlage[nPearlIndex].iArea;
+								FOR iSide:=0 TO 1 DO
+									IF  sRunData.sPearlingData.iSharpenFreq > 0 AND aArea[iCurrentArea].iNbOfPearls + aiNbOfPearlsDone[iSide] > sRunData.sPearlingData.iSharpenFreq AND abUseSpindle[iSide] THEN
+										abNeedSharpening[iSide] := TRUE;
+									END_IF
+								END_FOR
+							END_IF
+							FOR iSide:=0 TO 1 DO
+								(* Check if sharpen need if Area is bigger then SharpenFreq, should not happen *)
+								IF  sRunData.sPearlingData.iSharpenFreq > 0 AND aiNbOfPearlsDone[iSide] > sRunData.sPearlingData.iSharpenFreq  AND abUseSpindle[iSide] THEN
+									abNeedSharpening[iSide] := TRUE;
+								END_IF
+								(* Check force sharpen for each pearl *)
+								IF sRunData.sPearlingData.aDataPerlage[nPearlIndex].bForceSharpen  AND abUseSpindle[iSide] THEN
+									abNeedSharpening[iSide] := TRUE;
+								END_IF
+							END_FOR
+							IF ((abNeedSharpening[PH_Left] OR abNeedChangeStick[PH_Left]) AND abUseSpindle[PH_Left]) OR
+								((abNeedSharpening[PH_Right] OR abNeedChangeStick[PH_Right]) AND abUseSpindle[PH_Right]) THEN
+								sCurrentState.eStep := SP_RunStp52;
+							ELSE
+								sCurrentState.eStep := SP_RunStp54;
+							END_IF
+						SP_RunStp52 :
+							(* Sharpen stick *)
+							FOR iSide:=0 TO 1 DO
+								IF abUseSpindle[iSide] THEN
+									IF abNeedSharpening[iSide] AND NOT abNeedChangeStick[iSide] THEN
+										abSharpenStick[iSide] := TRUE;
+									END_IF
+									IF abNeedChangeStick[iSide] THEN
+										abChangeStick[iSide] := TRUE;
+										abNeedChangeStick[iSide] := FALSE;
+									END_IF
+								END_IF
+							END_FOR
+							sCurrentState.eStep := SP_RunStp53;
+						SP_RunStp53 :
+							(* Wait end of sharpening during prod *)
+							IF ((NOT abChangeStick[PH_Left] AND NOT abSharpenStick[PH_Left])  OR NOT abUseSpindle[PH_Left]) AND
+								((NOT abChangeStick[PH_Right] AND NOT abSharpenStick[PH_Right])  OR NOT abUseSpindle[PH_Right]) THEN
+								(* Move Z to safe *)
+								FOR iSide:=0 TO 1 DO
+									alrTargetPos[PA_Z1+iSide] := alrSafePos[PA_Z1+iSide];
+									aeMoveRobotCommand[PA_Z1+iSide] := AC_MoveAtAbsPos;
+								END_FOR
+								sCurrentState.eStep := SP_RunStp54;
+							END_IF
+						SP_RunStp54:
+							(* Do one pearl *)
+							IF bPauseReq THEN
+								(* Stop request during prod*)
+								FOR iSide:=0 TO 1 DO
+									abPearlingWeightOutOfToleranceDetected[iSide] := FALSE;
+									abStickBrokenDetected[iSide] := FALSE;
+								END_FOR
+								bSecurityErrorDetected := FALSE;
+								sCurrentState.eStep := SP_RunStp90;
+							ELSE
+								(* Security already checked before pearling start*)
+								(* Move to preref pos if needed *)
+								IF sRunData.sPearlingData.aDataPerlage[nPearlIndex].bMoveToSafe THEN
+									FOR iSide:=0 TO 1 DO
+										IF abUseSpindle[iSide] THEN
+											alrTargetPos[PA_Z1+iSide] := alrPreRefPosZ[iSide];
+											aeMoveRobotCommand[PA_Z1+iSide] := AC_MoveAtAbsPos;
+										END_IF
+									END_FOR
+								END_IF
+								sCurrentState.eStep := SP_RunStp55;
+							END_IF
+						SP_RunStp55:
+							IF (aTRobotAxis[PA_Z1].eCurrentState = AS_InPosition) AND (aTRobotAxis[PA_Z2].eCurrentState = AS_InPosition) THEN
+								(* Move to XY pearl *)
+								FOR iSide:=0 TO 1 DO
+									aTDispersion[iSide](bGenerate := TRUE, nPearl := nPearlIndex );
+								END_FOR
+								alrTargetPos[PA_X] := alrPearlingOffset[PA_X]  + sRunData.sPearlingData.aDataPerlage[nPearlIndex].lrX *alrPearlingInvert[PA_X];
+								alrTargetPos[PA_Y] := alrPearlingOffset[PA_Y]  + sRunData.sPearlingData.aDataPerlage[nPearlIndex].lrY *alrPearlingInvert[PA_Y];
+								IF (sRunData.sPearlingData.aDataPerlage[nPearlIndex].bXYDispersion) THEN
+									alrTargetPos[PA_X] := alrTargetPos[PA_X]  + ((aTDispersion[PH_Left].lrDispersionX * INT_TO_LREAL(sRunData.sPearlingData.iDispersionXY) / 100.0)) - 0.5;
+									alrTargetPos[PA_Y] := alrTargetPos[PA_Y]  + ((aTDispersion[PH_Left].lrDispersionY * INT_TO_LREAL(sRunData.sPearlingData.iDispersionXY) / 100.0)) - 0.5;
+								END_IF
+								aeMoveRobotCommand[PA_X] := AC_MoveAtAbsPos;
+								aeMoveRobotCommand[PA_Y] := AC_MoveAtAbsPos;
+								sCurrentState.eStep := SP_RunStp60;
+							END_IF
+						SP_RunStp60 :
+							IF (eRobotXYStatus = AS_InPosition) THEN
+								FOR iSide:=0 TO 1 DO
+									IF abUseSpindle[iSide] THEN
+										aeProbingArea[iSide] := aePearlingArea[iSide]; (* redefine probing area, could be change by sharpening *)
+										alrTargetPos[PA_Z1+iSide] := alrPreRefPosZ[iSide];
+										aeMoveRobotCommand[PA_Z1+iSide] := AC_MoveAtAbsPos;
+									END_IF
+								END_FOR
+								sCurrentState.eStep := SP_RunStp61;
+							END_IF
+						SP_RunStp61 :
+							IF (eRobotXYStatus = AS_InPosition) AND (aTRobotAxis[PA_Z1].eCurrentState = AS_InPosition) AND (aTRobotAxis[PA_Z2].eCurrentState = AS_InPosition) AND
+								NOT asPearlData[PH_Left].bNewPearl AND NOT asPearlData[PH_Right].bNewPearl AND NOT asPearlData[PH_Left].bNewPart AND NOT asPearlData[PH_Right].bNewPart
+								AND (aTWaitMotorStarted[PH_Left].Q OR  NOT abUseSpindle[PH_Left]) AND (aTWaitMotorStarted[PH_Right].Q OR  NOT abUseSpindle[PH_Right]) THEN
+								(* Calculate pearl energy with dispersion *)
+								IF (sRunData.sPearlingData.aDataPerlage[nPearlIndex].lrRate > 100) THEN
+									sRunData.sPearlingData.aDataPerlage[nPearlIndex].lrRate := 100;
+								END_IF
+								bSecurityErrorDetected := FALSE;
+								FOR iSide:=0 TO 1 DO
+									abStickBrokenDetected[iSide] := FALSE;
+									abPearlingWeightOutOfToleranceDetected[iSide] := FALSE;
+									IF abUseSpindle[iSide] THEN
+										abPearlNeeded[iSide] := nPearlIndex > anPearlIndexDone[iSide] AND NOT sRunData.apsPartData[iSide]^.abPearlingDone[aiSideInfo[iSide],sRunData.apsPartData[iSide]^.ePartSide];
+										IF nPearlIndex < anPearlIndexDone[iSide] THEN
+											nPearlIndex := anPearlIndexDone[iSide] + 1;
+										END_IF
+									ELSE
+										abPearlNeeded[iSide] := FALSE;
+									END_IF
+									IF abPearlNeeded[iSide] THEN
+										alrDeltaSharpenProbing[iSide] := (alrSharpenProbing[iSide] - alrHeadProbingRef[iSide]) * 1000;
+										alrPearlingEnergy[iSide] := alrBasePearlingEnergy[iSide] * (1-((aTDispersion[iSide].lrDispersionZ * INT_TO_LREAL(sRunData.sPearlingData.iDispersionZ))/100))*(sRunData.sPearlingData.aDataPerlage[nPearlIndex].lrRate/100)*alrRatiog2mm[iSide];
+										(* Do pearl, first move Z to position with correction *)
+										abCheckingStick[iSide] := (alrPearlingEnergy[iSide] >= 0.07);
+										alrTargetPos[PA_Z1+iSide] := alrHeadContactPosition[iSide] + sRunData.sPearlingData.aDataPerlage[nPearlIndex].lrZ* alrPearlingInvert[PA_Z1+iSide] + alrPearlingEnergy[iSide] + alrCorrectionMCR[iSide];
+										alrDeltaStickCorrection[iSide] := alrTargetPos[PA_Z1+iSide] - (alrHeadContactStickPosition[iSide] + sRunData.sPearlingData.aDataPerlage[nPearlIndex].lrZ* alrPearlingInvert[PA_Z1+iSide] + alrPearlingEnergy[iSide] + alrCorrectionMCR[iSide] + alrStickCorrection[iSide]);
+										(*alrTargetPos[PA_Z1+iSide] := alrHeadContactStickPosition[iSide] + sRunData.sPearlingData.aDataPerlage[nPearlIndex].lrZ* alrPearlingInvert[PA_Z1+iSide] + alrPearlingEnergy[iSide] + alrCorrectionMCR[iSide] + alrStickCorrection[iSide]; *)
+										alrTargetPos[PA_Z1+iSide] := alrTargetPos[PA_Z1+iSide] + alrDeltaStickCorrection[iSide];
+										(*alrDeltaStickCorrection[iSide] := alrHeadContactPosition[iSide] - alrHeadContactStickPosition[iSide] - alrStickCorrection[iSide];*)
+										IF (alrTargetPos[PA_Z1+iSide] > alrHeadSecurityPosition[iSide]) THEN
+											(* this part is aborted and mark for reject *)
+											sRunData.apsPartData[iSide]^.abBadPearling[iSide,sRunData.apsPartData[iSide]^.ePartSide] := TRUE;
+											sRunData.apsPartData[iSide]^.abPearlingDone[aiSideInfo[iSide],sRunData.apsPartData[iSide]^.ePartSide] := TRUE;
+											bSecurityErrorDetected := TRUE;
+											iDebugPos := 5;
+											iDebugSide := iSide;
+										ELSE
+											aeMoveRobotCommand[PA_Z1+iSide] := AC_MoveAtAbsPos;
+											abPearlStarted[iSide] := FALSE;
+											abPearlDone[iSide] := FALSE;
+											abPearlPosReached[iSide] := FALSE;
+											aIMinPos[iSide] := 32767;
+											sCurrentState.eStep := SP_RunStp62;
+										END_IF
+									END_IF
+								END_FOR
+								FOR iSide:=0 TO 1 DO
+									IF abPearlNeeded[iSide] AND NOT bSecurityErrorDetected THEN
+										abBadPearling[iSide] := sRunData.apsPartData[iSide]^.abBadPearling[iSide,sRunData.apsPartData[iSide]^.ePartSide];
+										sRunData.apsPartData[iSide]^.abBadPearling[iSide,sRunData.apsPartData[iSide]^.ePartSide] := TRUE;
+									END_IF
+								END_FOR
+							END_IF
+							IF bSecurityErrorDetected THEN
+								aeMoveRobotCommand[PA_Z1] := AC_None;
+								aeMoveRobotCommand[PA_Z2] := AC_None;
+								sCurrentState.eStep := SP_RunStp90;
+							END_IF
+						SP_RunStp62: (* Do pearl here *)
+							FOR iSide:=0 TO 1 DO
+								IF abPearlNeeded[iSide] THEN
+									IF NOT abPearlStarted[iSide] AND ((aTRobotAxis[PA_Z1+iSide].lrCurrentPos > (alrHeadContactPosition[iSide] + sRunData.sPearlingData.aDataPerlage[nPearlIndex].lrZ * alrPearlingInvert[PA_Z1+iSide]))  OR aTRobotAxis[PA_Z1+iSide].eCurrentState = AS_InPosition) THEN
+										aTDetectStickBroken[iSide](IN := FALSE);
+										aTPearlingTimer[iSide](IN := FALSE);
+										abPearlStarted[iSide] := TRUE;
+									END_IF
+									IF abPearlStarted[iSide] AND NOT abPearlDone[iSide] THEN
+										aTPearlingTimer[iSide](IN := TRUE,PT := INT_TO_TIME(sRunData.sPearlingData.iPearlingTime));
+										aTDetectStickBroken[iSide](IN := NOT abStickContact[iSide] AND abCheckingStick[iSide] AND (aTRobotAxis[PA_Z1+iSide].eCurrentState = AS_InPosition),PT := TBreakStickDetectTime);
+										IF aTDetectStickBroken[iSide].Q AND NOT abPearlDone[iSide] THEN
+											abStickBrokenDetected[iSide] := TRUE;
+											iDebugPosBrokenStick := 10;
+											iDebugSide := iSide;
+										END_IF
+										IF aTRobotAxis[PA_Z1+iSide].eCurrentState = AS_InPosition OR aTPearlingTimer[iSide].Q THEN
+											abPearlPosReached[iSide] := TRUE;
+											IF aiContactDistance[iSide] < aIMinPos[iSide] THEN
+												aIMinPos[iSide] := aiContactDistance[iSide];
+											END_IF
+										END_IF
+										IF aTPearlingTimer[iSide].Q THEN
+											(* Move Z to pre-ref *)
+											abPearlDone[iSide] := TRUE;
+											aiNbOfPearlsDone[iSide] := aiNbOfPearlsDone[iSide] + 1;
+											(* pearling speed optimization in counterbores *)
+											IF bUsePearlMoveToSafe THEN
+												alrTargetPos[PA_Z1+iSide] := alrHeadContactPosition[iSide] + sRunData.sPearlingData.aDataPerlage[nPearlIndex].lrZ* alrPearlingInvert[PA_Z1+iSide] - lrSecurityPreRefPosZ;
+											ELSE
+												alrTargetPos[PA_Z1+iSide] := alrPreRefPosZ[iSide];
+											END_IF
+											aeMoveRobotCommand[PA_Z1+iSide] := AC_MoveAtAbsPos;
+										END_IF
+									END_IF
+								ELSE
+									abPearlDone[iSide] := TRUE;
+								END_IF
+							END_FOR
+							IF (abPearlDone[PH_Left]  AND abPearlDone[PH_Right]) THEN
+								FOR iSide:=0 TO 1 DO
+									IF abPearlNeeded[iSide] THEN
+										alrDeltaZPearl[iSide] :=INT_TO_LREAL(aIMinPos[iSide] - aiContactThresholdArea[iSide , aePearlingArea[iSide]]) / alrSensorRate[iSide];
+										alrDeltaWeightPearl[iSide] := (alrPearlingEnergy[iSide] - alrDeltaZPearl[iSide]) / alrRatiog2mm[iSide];
+										asPearlData[iSide].iPearlNb := UINT_TO_INT(nPearlIndex);
+										asPearlData[iSide].iRate := DINT_TO_INT(TRUNC((sRunData.sPearlingData.aDataPerlage[nPearlIndex].lrRate+0.1)));
+										asPearlData[iSide].lrDispersion := aTDispersion[iSide].lrDispersionZ * INT_TO_LREAL(sRunData.sPearlingData.iDispersionZ);
+										asPearlData[iSide].lrPearlingCalcPos := alrPearlingEnergy[iSide];
+										asPearlData[iSide].lrCorrectionMCR := alrCorrectionMCR[iSide];
+										asPearlData[iSide].lrDeltaCurrent := 0;(*TMCRDrv.lrPower; *)
+										asPearlData[iSide].lrPearlingMeasurePos := 0;(* TMCRDrv.lrPower*sStickData.sStickDataMMI.lrMA2MMFactor;*)
+										asPearlData[iSide].lrSensorProbePos := alrHeadContactPosition[iSide];
+										asPearlData[iSide].lrSensorPearlPos := alrDeltaZPearl[iSide];
+										asPearlData[iSide].lrDeltaWeight := alrDeltaWeightPearl[iSide];
+										asPearlData[iSide].bNewPearl := TRUE;
+										asPearlData[iSide].iVacuumFlow := aiVacuumFlow[iSide];
+										adwPearlsCounter[iSide] := adwPearlsCounter[iSide] + 1;
+									END_IF
+								END_FOR
+								sCurrentState.eStep := SP_RunStp63;
+							END_IF
+						SP_RunStp63:
+							IF (aTRobotAxis[PA_Z1].eCurrentState = AS_InPosition) AND (aTRobotAxis[PA_Z2].eCurrentState = AS_InPosition) THEN
+								FOR iSide:=0 TO 1 DO
+									IF abPearlNeeded[iSide] THEN
+										 (* Check if pearl has been process correctly *)
+										IF ((alrPearlingEnergy[iSide] - alrDeltaZPearl[iSide] + alrCorrectionMCR[iSide]) > lrStickErrorDeltaPos) THEN
+											abStickBrokenDetected[iSide] := TRUE;
+											iDebugPosBrokenStick := 11;
+											iDebugSide := iSide;
+										END_IF
+										IF ABS(alrDeltaWeightPearl[iSide]) >= sStickDataShared.sStickDataMMIShared.iWeightTolerance THEN
+											abPearlingWeightOutOfToleranceDetected[iSide] := TRUE;
+										END_IF
+										IF NOT abStickBrokenDetected[iSide] AND NOT abPearlingWeightOutOfToleranceDetected[iSide] THEN
+											anPearlIndexDone[iSide] := nPearlIndex;
+											sRunData.apsPartData[iSide]^.anLastPearlIndexDone[aiSideInfo[iSide],sRunData.apsPartData[iSide]^.ePartSide] := nPearlIndex;
+										END_IF
+										IF abStickBrokenDetected[iSide] OR abPearlingWeightOutOfToleranceDetected[iSide] THEN
+											abBadPearling[iSide] := TRUE;
+										END_IF
+										sRunData.apsPartData[iSide]^.abBadPearling[iSide,sRunData.apsPartData[iSide]^.ePartSide] := abBadPearling[iSide];
+										 (* Calculate correction *)
+										lrMaxMCRCorrection := asStickDataMMI[iSide].lrMCRCorrectionStep;
+										IF abFirstPearl[iSide] THEN
+											lrMaxMCRCorrection := 0.2;
+											alrFirstPearlCorrection[iSide] := (alrDeltaZPearl[iSide] - alrPearlingEnergy[iSide]) * 1000;
+											abFirstPearl[iSide] := FALSE;
+										END_IF
+										IF  (alrDeltaZPearl[iSide] > alrPearlingEnergy[iSide]) THEN
+											IF ABS(alrDeltaZPearl[iSide] - alrPearlingEnergy[iSide]) > lrMaxMCRCorrection THEN
+												alrCorrectionMCR[iSide] := alrCorrectionMCR[iSide] - lrMaxMCRCorrection;
+											ELSE
+												alrCorrectionMCR[iSide] := alrCorrectionMCR[iSide] - ABS(alrDeltaZPearl[iSide] - alrPearlingEnergy[iSide]);
+											END_IF
+										ELSIF (alrDeltaZPearl[iSide] < alrPearlingEnergy[iSide]) THEN
+											IF ABS(alrDeltaZPearl[iSide] - alrPearlingEnergy[iSide]) > lrMaxMCRCorrection THEN
+												alrCorrectionMCR[iSide] := alrCorrectionMCR[iSide] + lrMaxMCRCorrection;
+											ELSE
+												alrCorrectionMCR[iSide] := alrCorrectionMCR[iSide] + ABS(alrDeltaZPearl[iSide] - alrPearlingEnergy[iSide]);
+											END_IF
+										END_IF
+									END_IF
+								END_FOR
+								sCurrentState.eStep := SP_RunStp64;
+							END_IF
+						SP_RunStp64: (* Error management *)
+							IF abStickBrokenDetected[PH_Left] OR abStickBrokenDetected[PH_Right] OR abPearlingWeightOutOfToleranceDetected[PH_Left] OR abPearlingWeightOutOfToleranceDetected[PH_Right] THEN
+								FOR iSide:=0 TO 1 DO
+									IF abPearlNeeded[iSide] THEN
+										IF sStickDataShared.sStickDataMMIShared.bRestartBeginOfArea AND abStickBrokenDetected[iSide] THEN
+											nPearlIndex := INT_TO_UINT(aArea[iCurrentArea].iFirstPearl);
+											anPearlIndexDone[iSide] := nPearlIndex;
+											sRunData.apsPartData[iSide]^.anLastPearlIndexDone[aiSideInfo[iSide],sRunData.apsPartData[iSide]^.ePartSide] := nPearlIndex;
+										END_IF
+										IF abStickBrokenDetected[iSide] OR abPearlingWeightOutOfToleranceDetected[iSide] THEN
+											aiCountPearlError[iSide] := aiCountPearlError[iSide] + 1;
+										END_IF
+										IF abStickBrokenDetected[iSide] OR abPearlingWeightOutOfToleranceDetected[iSide] THEN
+											aiCountPearlError[iSide] := aiCountPearlError[iSide] + 1;
+										END_IF
+										IF sStickDataShared.sStickDataMMIShared.bStopOnStickBreak AND abStickBrokenDetected[iSide] THEN
+											aiCountPearlError[iSide] := 3;
+										END_IF
+										IF sStickDataShared.sStickDataMMIShared.bStopOnWeightOutOfTolerance AND abPearlingWeightOutOfToleranceDetected[iSide] THEN
+											aiCountPearlError[iSide] := 3;
+										END_IF
+									END_IF
+								END_FOR
+								IF (aiCountPearlError[PH_Left] >= 3 AND abPearlNeeded[PH_Left]) OR (aiCountPearlError[PH_Right] >= 3 AND abPearlNeeded[PH_Right]) THEN
+									FOR iSide:=0 TO 1 DO
+										IF abPearlNeeded[iSide] AND aiCountPearlError[iSide] >= 3 THEN
+											aiCountPearlError[iSide] := 0;
+										END_IF
+									END_FOR
+									sCurrentState.eStep := SP_RunStp90; (* Stop during process *)
+								ELSE
+									sCurrentState.eStep := SP_RunStp50; (* continue process *)
+								END_IF
+							ELSE
+								(* Check next pearl *)
+								nPearlIndex := nPearlIndex + 1;
+								sCurrentState.eStep := SP_RunStp50;
+							END_IF
+						SP_RunStp80:
+							(* Pearling is finished *)
+							(* Move Z to safe *)
+							alrTargetPos[PA_Z1] := alrSafePos[PA_Z1];
+							alrTargetPos[PA_Z2] := alrSafePos[PA_Z2];
+							aeMoveRobotCommand[PA_Z1] := AC_MoveAtAbsPos;
+							aeMoveRobotCommand[PA_Z2] := AC_MoveAtAbsPos;
+							sCurrentState.eStep := SP_RunStp81;
+						SP_RunStp81:
+							IF (aTRobotAxis[PA_Z1].eCurrentState = AS_InPosition) AND
+									(aTRobotAxis[PA_Z2].eCurrentState = AS_InPosition) THEN
+								FOR iSide:=0 TO 1 DO
+									abAspirationPearling[iSide] := FALSE;
+									IF abUseSpindle[iSide] THEN
+										sRunData.apsPartData[iSide]^.abPearlingDone[aiSideInfo[iSide],sRunData.apsPartData[iSide]^.ePartSide] := TRUE;
+										aTDispersion[iSide](bNewPart := TRUE);
+										//sRunData.apsPartData[iSide]^.bToReject := sRunData.apsPartData[iSide]^.bToReject OR sRunData.apsPartData[iSide]^.abBadPearling[0,0] OR sRunData.apsPartData[iSide]^.abBadPearling[0,1] OR sRunData.apsPartData[iSide]^.abBadPearling[PH_Right,0] OR sRunData.apsPartData[iSide]^.abBadPearling[1,1];
+										sRunData.apsPartData[iSide]^.bToReject := sRunData.apsPartData[iSide]^.abBadPearling[PH_Left,PS_SUS] OR sRunData.apsPartData[iSide]^.abBadPearling[PH_Left,PS_SOUS] OR sRunData.apsPartData[iSide]^.abBadPearling[PH_Right,PS_SUS] OR sRunData.apsPartData[iSide]^.abBadPearling[PH_Right,PS_SOUS];
+									END_IF
+								END_FOR
+								(* Force a sharpen if needed *)
+								IF sRunData.bForceSharpenAfterPearling THEN
+									abUseSpindle := abHeadIsUsed;
+									FOR iSide:=0 TO 1 DO
+										abSharpenStick[iSide] := TRUE;
+									END_FOR
+								ELSE (*IF abUseSpindle[0] AND abUseSpindle[1] THEN*)
+									iCurrentArea := sRunData.sPearlingData.aDataPerlage[PH_Right].iArea;
+									FOR iSide:=0 TO 1 DO
+										IF  abUseSpindle[iSide] THEN
+											IF sRunData.sPearlingData.iSharpenFreq > 0 AND ((aiNbOfPearlsDone[iSide] + aArea[iCurrentArea].iNbOfPearls) > sRunData.sPearlingData.iSharpenFreq) THEN
+												abSharpenStick[iSide] := TRUE;
+											END_IF
+											IF sRunData.sPearlingData.aDataPerlage[PH_Right].bForceSharpen THEN
+												abSharpenStick[iSide] := TRUE;
+											END_IF
+										END_IF
+									END_FOR
+									IF bParallelProduction AND (abSharpenStick[PH_Left] OR abSharpenStick[PH_Right]) THEN
+										(* Sharpen both head if we are in parrelle mode *)
+										abUseSpindle := abHeadIsUsed;
+										abSharpenStick[PH_Left] := TRUE;
+										abSharpenStick[PH_Right] := TRUE;
+									END_IF
+								END_IF
+								sCurrentState.eStep := SP_RunStp1;
+							END_IF
+						SP_RunStp90:
+							(* Stop request during pearling, move to safe *)
+							FOR iSide := 0 TO 1 DO
+								alrTargetPos[PA_Z1+iSide] := alrSafePos[PA_Z1+iSide];
+								aeMoveRobotCommand[PA_Z1+iSide] := AC_MoveAtAbsPos;
+							END_FOR
+							sCurrentState.eStep := SP_RunStp91;
+						SP_RunStp91:
+							IF (aTRobotAxis[PA_Z1].eCurrentState = AS_InPosition) AND
+									(aTRobotAxis[PA_Z2].eCurrentState = AS_InPosition) THEN
+								FOR iSide := 0 TO 1 DO
+									IF abPearlingWeightOutOfToleranceDetected[iSide] THEN
+										abPearlingWeightOutOfToleranceError[iSide] := TRUE;
+										abSharpenStick[iSide] := TRUE;
+										abTakeZRef[iSide] := TRUE;
+									END_IF
+									abPearlingWeightOutOfToleranceDetected[iSide] := FALSE;
+									IF abStickBrokenDetected[iSide] THEN
+										abStickBroken[iSide] := TRUE;
+										abNeedChangeStick[iSide] := TRUE;
+									END_IF
+									abStickBrokenDetected[iSide] := FALSE;
+									IF abNeedChangeStick[iSide] THEN
+										abChangeStick[iSide] := TRUE;
+										abTakeZRef[iSide] := TRUE;
+									END_IF
+									abNeedChangeStick[iSide] := FALSE;
+								END_FOR
+								IF bSecurityErrorDetected THEN
+									bSecurityError := TRUE;
+								END_IF
+								bSecurityErrorDetected := FALSE;
+								(* Stop module *)
+								sCurrentState.eStep := SP_RunStp92;
+							END_IF
+						SP_RunStp92:
+							IF ((NOT abChangeStick[PH_Left] AND NOT abSharpenStick[PH_Left])  OR NOT abUseSpindle[PH_Left]) AND
+									((NOT abChangeStick[PH_Right] AND NOT abSharpenStick[PH_Right])  OR NOT abUseSpindle[PH_Right]) THEN
+								sCurrentState.eStep := SP_RunStp30;
+							END_IF
+						SP_RunStp200:(* Change Chuck *)
+							IF ((NOT abChangeStick[PH_Left] AND NOT abSharpenStick[PH_Left])  OR NOT abUseSpindle[PH_Left]) AND
+								((NOT abChangeStick[PH_Right] AND NOT abSharpenStick[PH_Right])  OR NOT abUseSpindle[PH_Right]) THEN
+								FOR iSide:=0 TO 1 DO
+									abUseSpindle[iSide] := FALSE;
+								END_FOR
+								alrCurrentSpeed := alrMaxRobotSpeed;
+								alrTargetPos[PA_Z1] := alrSafePos[PA_Z1];
+								alrTargetPos[PA_Z2] := alrSafePos[PA_Z2];
+								aeMoveRobotCommand[PA_Z1] := AC_MoveAtAbsPos;
+								aeMoveRobotCommand[PA_Z2] := AC_MoveAtAbsPos;
+								sCurrentState.eStep := SP_RunStp201;
+							END_IF
+						SP_RunStp201 :
+							IF 	(aTRobotAxis[PA_Z1].eCurrentState = AS_InPosition) AND
+								(aTRobotAxis[PA_Z2].eCurrentState = AS_InPosition) THEN
+								IF bChangeToolSide THEN
+									alrTargetPos[PA_X] := aTRobotAxis[PA_X].lrMinPos+1;
+									alrTargetPos[PA_Y] := aTRobotAxis[PA_Y].lrMinPos+1;
+								ELSE
+									alrTargetPos[PA_X] := aTRobotAxis[PA_X].lrMaxPos-1;
+									alrTargetPos[PA_Y] := aTRobotAxis[PA_Y].lrMinPos+1;
+								END_IF
+								bChangeToolSide := NOT bChangeToolSide;
+								aeMoveRobotCommand[PA_X] := AC_MoveAtAbsPos;
+								aeMoveRobotCommand[PA_Y] := AC_MoveAtAbsPos;
+								sCurrentState.eStep := SP_RunStp202;
+							END_IF
+						SP_RunStp202 :
+							IF (eRobotXYStatus = AS_InPosition) THEN
+								sCurrentState.eStep := SP_RunStp1;
+							END_IF
+						SP_RunStp210:(* Check Sharpen *)
+							IF ((NOT abChangeStick[PH_Left] AND NOT abSharpenStick[PH_Left])  OR NOT abUseSpindle[PH_Left]) AND
+								((NOT abChangeStick[PH_Right] AND NOT abSharpenStick[PH_Right])  OR NOT abUseSpindle[PH_Right]) THEN
+									sCurrentState.eStep := SP_RunStp211;
+							END_IF
+						SP_RunStp211: (* it's now safe to switch head used *)
+							abUseSpindle := abHeadIsUsed;
+							FOR iSide:=0 TO 1 DO
+								IF NOT abChuckClosed[iSide] AND abUseSpindle[iSide] THEN
+									abChangeStick[iSide] := TRUE;
+								END_IF
+							END_FOR
+							sCurrentState.eStep := SP_RunStp1;
+					END_CASE
+				END_IF
+			MS_Manual :
+				CASE eTableSideForLoader OF
+					TS_A:
+						TManualCmd.eTableSide := TS_B;
+					TS_B:
+						TManualCmd.eTableSide := TS_A;
+					ELSE
+						TManualCmd.eTableSide := eTableSideForLoader;
+				END_CASE
+				TManualCmd.bAxisZSafe[PH_Left] := (aTRobotAxis[PA_Z1].lrCurrentPos < (alrSafePos[PA_Z1]+lrSafeTolerance)) AND ((aTRobotAxis[PA_Z1].eCurrentState = AS_InPosition) OR (aTRobotAxis[PA_Z1].eCurrentState = AS_PowerOff)) AND (aTRobotAxis[PA_Z1].bAxisHomed);
+				TManualCmd.bAxisZSafe[PH_Right] := (aTRobotAxis[PA_Z2].lrCurrentPos < (alrSafePos[PA_Z2]+lrSafeTolerance)) AND ((aTRobotAxis[PA_Z2].eCurrentState = AS_InPosition) OR (aTRobotAxis[PA_Z2].eCurrentState = AS_PowerOff)) AND (aTRobotAxis[PA_Z2].bAxisHomed);;
+
+				TManualCmd.aTStartMotor[PH_Left].Enable :=  bPowerOn AND NOT abOpenChuck[PH_Left];
+				TManualCmd.aTOpenChuck[PH_Left].Enable := NOT abStartPearlingMotor[PH_Left];
+				TManualCmd.aTStartMotor[PH_Right].Enable :=  bPowerOn AND NOT abOpenChuck[PH_Right];
+				TManualCmd.aTOpenChuck[PH_Right].Enable := NOT abStartPearlingMotor[PH_Right];
+
+				bManualZIsSafe :=  (aTRobotAxis[LA_Z1].lrCurrentPos < (alrSafePos[PA_Z1]+lrSafeTolerance)) AND (aTRobotAxis[PA_Z2].lrCurrentPos < (alrSafePos[LA_Z2]+lrSafeTolerance))
+						AND (aTRobotAxis[PA_Z1].bAxisHomed) AND (aTRobotAxis[PA_Z2].bAxisHomed);
+
+				TManualCmd.TSafe.Enable := TRUE;
+				TManualCmd.aTCalibrateWeight[PH_Left].Enable := NOT bCalibrationInProgress ;
+				TManualCmd.aTCalibrateWeight[PH_Right].Enable := NOT bCalibrationInProgress;
+				FOR iAxis := 0 TO 3 DO
+					TManualCmd.aTCalibrateWeight[PH_Left].Enable := TManualCmd.aTCalibrateWeight[PH_Left].Enable AND aTRobotAxis[iAxis].eCurrentState = AS_InPosition;
+					TManualCmd.aTCalibrateWeight[PH_Right].Enable := TManualCmd.aTCalibrateWeight[PH_Right].Enable AND aTRobotAxis[iAxis].eCurrentState = AS_InPosition;
+					TManualCmd.TSafe.Enable := TManualCmd.TSafe.Enable AND ((aTRobotAxis[iAxis].eCurrentState = AS_InPosition) OR  (aTRobotAxis[iAxis].eCurrentState = AS_PowerOff)  OR  (aTRobotAxis[iAxis].eCurrentState = AS_NotHomed));
+					TManualCmd.aTAxis[iAxis].Home.Enable := ((aTRobotAxis[iAxis].eCurrentState = AS_InPosition) OR (aTRobotAxis[iAxis].eCurrentState = AS_NotHomed));
+					TManualCmd.aTAxis[iAxis].MoveBw.Enable := (aTRobotAxis[iAxis].eCurrentState = AS_InPosition) AND ((aTRobotAxis[iAxis].lrCurrentPos - alrJogStep[iAxis] >= aTRobotAxis[iAxis].lrMinPos) OR NOT aTRobotAxis[iAxis].bMinPosMonitoring);
+					TManualCmd.aTAxis[iAxis].MoveFw.Enable := (aTRobotAxis[iAxis].eCurrentState = AS_InPosition) AND ((aTRobotAxis[iAxis].lrCurrentPos + alrJogStep[iAxis] <= aTRobotAxis[iAxis].lrMaxPos) OR NOT aTRobotAxis[iAxis].bMaxPosMonitoring);
+					TManualCmd.aTAxisPos[iAxis].MoveToTeach.Enable := (aTRobotAxis[iAxis].eCurrentState = AS_InPosition) AND
+							(( alrRobotPos[iAxis, TManualCmd.e_TeachPos] >= aTRobotAxis[iAxis].lrMinPos) OR NOT aTRobotAxis[iAxis].bMinPosMonitoring) AND
+							((alrRobotPos[iAxis, TManualCmd.e_TeachPos] <= aTRobotAxis[iAxis].lrMaxPos) OR NOT aTRobotAxis[iAxis].bMaxPosMonitoring);
+					TManualCmd.aTAxis[iAxis].CurrentPos := aTRobotAxis[iAxis].lrCurrentPos;
+					TManualCmd.aTAxisPos[iAxis].TeachedPos := alrRobotPos[iAxis, TManualCmd.e_TeachPos];
+					alrCurrentSpeed[iAxis] := aTRobotAxis[iAxis].lrManualSpeed;
+				END_FOR
+
+				IF NOT bManualZIsSafe THEN
+					TManualCmd.aTAxis[PA_X].Home.Enable := FALSE;
+					TManualCmd.aTAxis[PA_Y].Home.Enable := FALSE;
+					IF alrJogStep[PA_X] > lrManMaxXYMoveAllowed-0.1 THEN
+						TManualCmd.aTAxis[PA_X].MoveBw.Enable := FALSE;
+						TManualCmd.aTAxis[PA_X].MoveFw.Enable := FALSE;
+					END_IF
+					IF alrJogStep[PA_Y] > lrManMaxXYMoveAllowed-0.1 THEN
+						TManualCmd.aTAxis[PA_Y].MoveBw.Enable := FALSE;
+						TManualCmd.aTAxis[PA_Y].MoveFw.Enable := FALSE;
+					END_IF
+					IF alrJogStep[PA_Z1] > lrMaxXYMoveAllowed-0.1 THEN
+						TManualCmd.aTAxis[PA_Z1].MoveFw.Enable := FALSE;
+					END_IF
+					IF alrJogStep[PA_Z2] > lrMaxXYMoveAllowed-0.1 THEN
+						TManualCmd.aTAxis[PA_Z2].MoveFw.Enable := FALSE;
+					END_IF
+					TManualCmd.aTAxisPos[PA_X].MoveToTeach.Enable := TManualCmd.aTAxisPos[PA_X].MoveToTeach.Enable AND ABS(TManualCmd.aTAxisPos[PA_X].TeachedPos-aTRobotAxis[PA_X].lrCurrentPos) < lrManMaxXYMoveAllowed-0.1;
+					TManualCmd.aTAxisPos[PA_Y].MoveToTeach.Enable := TManualCmd.aTAxisPos[PA_Y].MoveToTeach.Enable AND ABS(TManualCmd.aTAxisPos[PA_Y].TeachedPos-aTRobotAxis[PA_Y].lrCurrentPos) < lrManMaxXYMoveAllowed-0.1;
+				END_IF
+				bManInterlockOut := NOT bManualZIsSafe;
+				TManualCmd.bWeightTableLeftValid := abWeightTableValid[PH_Left];
+				TManualCmd.bWeightTableRightValid := abWeightTableValid[PH_Right];
+				FOR i :=0 TO C_WEIGHT_TABLE_MAX DO
+					TManualCmd.alrWeightTableLeft[i] := alrWeightTable[PH_Left,i];
+					TManualCmd.alrWeightTableRight[i] := alrWeightTable[PH_Right,i];
+				END_FOR
+				FOR iSide:=0 TO 1 DO
+					TManualCmd.TResetMotorUseTime[iSide].Enable := TRUE;
+					TManualCmd.TResetSpindleUseTime[iSide].Enable := TRUE;
+					TManualCmd.alrRatiog2mm[iSide] := alrRatiog2mm[iSide];
+					TManualCmd.adwPearlsCounter[iSide] := adwPearlsCounter[iSide];
+				END_FOR
+				TManualCmd.lrWeightStepOnZ := lrLoadSensorStep;
+				TManualCmd.aiDistanceSensor[0] := iContact1Distance;
+				TManualCmd.aiDistanceSensor[1] := iContact2Distance;
+				TManualCmd.iWeightSensor := iLoadSensorValue;
+				CASE sCurrentState.eStep OF
+					SP_ManualStp0 :
+						FOR iSide:=0 TO 1 DO
+							TManualCmd.aTEjectStick[iSide].Enable := TRUE;
+							TManualCmd.aTActivateBlowing[iSide ].Enable := TRUE;
+							TManualCmd.TActivateAspirationTable[iSide].Activate := abAspirationPearling[iSide];
+							TManualCmd.aTStartMotor[iSide].Activate := abStartPearlingMotor[iSide];
+							TManualCmd.aTOpenChuck[iSide].Activate := abOpenChuck[iSide];
+							TManualCmd.aTEjectStick[iSide].Activate := abActivateEject[iSide];
+							TManualCmd.aTActivateBlowing[iSide].Activate := abActivateBlowing[iSide];
+							abStartPearlingMotor[iSide] := FALSE;
+							TManualCmd.TActivateAspirationTable[iSide].Enable := TRUE;
+							TManualCmd.TActivateAspirationTable[iSide].Activate := abAspirationPearling[iSide];
+							TManualCmd.aiSpindleSpeedSetpoint[iSide] := aiSpindleManualSpeed[iSide];
+							TManualCmd.aTCalibrateWeight[iSide].Activate := FALSE;
+							TManualCmd.aiMotorStartedTimeout[iSide] := aiMotorStartedTimeout[iSide];
+							TManualCmd.aiMotorStoppedTimeout[iSide] := aiMotorStoppedTimeout[iSide];
+							TManualCmd.TResetMotorUseTime[iSide].Activate := FALSE;
+							TManualCmd.TResetSpindleUseTime[iSide].Activate := FALSE;
+						END_FOR
+						FOR iAxis := 0 TO 3 DO
+							TManualCmd.aTAxis[iAxis].JogStep := alrJogStep[iAxis];
+							TManualCmd.aTAxis[iAxis].Home.Activate := FALSE;
+							TManualCmd.aTAxis[iAxis].MoveFw.Activate := FALSE;
+							TManualCmd.aTAxis[iAxis].MoveBw.Activate := FALSE;
+							TManualCmd.aTAxis[iAxis].Specific.Activate := FALSE;
+							TManualCmd.aTAxisPos[iAxis].MoveToTeach.Activate := FALSE;
+						END_FOR
+						TManualCmd.iCurrentMotorMinTh := iMCRMinThCurrent;
+						TManualCmd.iCurrentMotorWarnTh := iMCRWarnThCurrent;
+						TManualCmd.iCurrentMotorMaxTh := iMCRMaxThCurrent;
+						TManualCmd.TActivateAspirationSharpen.Enable := TRUE;
+						TManualCmd.TActivateAspirationSharpen.Activate := bAspirationSharpenOn;
+						TManualCmd.TSafe.Activate := FALSE;
+						bCalibrationInProgress := FALSE;
+						sCurrentState.eStep := SP_ManualStp1;
+					SP_ManualStp1:
+						IF bStopReq THEN
+							sCurrentState.eStatus := MS_Stopped;
+						ELSE
+							FOR iSide := 0 TO 1 DO
+								abStartPearlingMotor[iSide] := TManualCmd.aTStartMotor[iSide].Activate;
+								IF TManualCmd.TResetMotorUseTime[iSide].Activate THEN
+									aTMotorCounter[iSide](bReset := TRUE);
+									TManualCmd.TResetMotorUseTime[iSide].Activate := FALSE;
+								END_IF
+								IF TManualCmd.TResetSpindleUseTime[iSide].Activate THEN
+									aTSpindleCounter[iSide](bReset := TRUE);
+									TManualCmd.TResetSpindleUseTime[iSide].Activate := FALSE;
+								END_IF
+								IF TManualCmd.aiSpindleSpeedSetpoint[iSide] <> aiSpindleManualSpeed[iSide] THEN
+									aiSpindleManualSpeed[iSide] := TManualCmd.aiSpindleSpeedSetpoint[iSide];
+								END_IF
+								IF TManualCmd.aiMotorStartedTimeout[iSide] <> aiMotorStartedTimeout[iSide] THEN
+									aiMotorStartedTimeout[iSide] := TManualCmd.aiMotorStartedTimeout[iSide];
+								END_IF
+								IF TManualCmd.aiMotorStoppedTimeout[iSide] <> aiMotorStoppedTimeout[iSide] THEN
+									aiMotorStoppedTimeout[iSide] := TManualCmd.aiMotorStoppedTimeout[iSide];
+								END_IF
+								// Calibration
+								IF TManualCmd.aTCalibrateWeight[iSide].Activate THEN
+									TManualCmd.aTCalibrateWeight[iSide].Activate := FALSE;
+									bCalibrationInProgress := TRUE;
+									iCurrentManAxis := iSide;
+									sCurrentState.eStep := SP_ManualStp20;
+								END_IF
+							END_FOR
+							IF TManualCmd.iCurrentMotorMinTh <> iMCRMinThCurrent THEN
+								iMCRMinThCurrent := TManualCmd.iCurrentMotorMinTh;
+							END_IF
+							IF TManualCmd.iCurrentMotorMaxTh <> iMCRMaxThCurrent THEN
+								iMCRMaxThCurrent := TManualCmd.iCurrentMotorMaxTh;
+							END_IF
+							IF TManualCmd.iCurrentMotorWarnTh <> iMCRWarnThCurrent THEN
+								iMCRWarnThCurrent := TManualCmd.iCurrentMotorWarnTh;
+							END_IF
+							FOR iAxis := 0 TO 3 DO
+								TManualCmd.aTAxisPos[iAxis].TeachedPos := alrRobotPos[iAxis,TManualCmd.e_TeachPos];
+								IF TManualCmd.aTAxisPos[iAxis].Teach THEN
+									alrRobotPos[iAxis,TManualCmd.e_TeachPos] := aTRobotAxis[iAxis].lrCurrentPos;
+								END_IF
+								TManualCmd.aTAxisPos[iAxis].Teach := FALSE;
+							END_FOR
+							FOR iAxis := 0 TO 3 DO
+								IF (alrJogStep[iAxis] <> TManualCmd.aTAxis[iAxis].JogStep) THEN
+									alrJogStep[iAxis] := TManualCmd.aTAxis[iAxis].JogStep;
+								END_IF
+								IF TManualCmd.aTAxisPos[iAxis].MoveToTeach.Activate THEN
+									alrTargetPos[iAxis] := TManualCmd.aTAxisPos[iAxis].TeachedPos;
+									iCurrentManAxis := iAxis;
+									sCurrentState.eStep := SP_ManualStp2;
+									EXIT;
+								END_IF
+								IF TManualCmd.aTAxis[iAxis].MoveFw.Activate THEN
+									alrTargetPos[iAxis] := aTRobotAxis[iAxis].lrCurrentPos + alrJogStep[iAxis];
+									iCurrentManAxis := iAxis;
+									sCurrentState.eStep := SP_ManualStp2;
+									EXIT;
+								END_IF
+								IF TManualCmd.aTAxis[iAxis].MoveBw.Activate THEN
+									alrTargetPos[iAxis] := aTRobotAxis[iAxis].lrCurrentPos - alrJogStep[iAxis];
+									iCurrentManAxis := iAxis;
+									sCurrentState.eStep := SP_ManualStp2;
+									EXIT;
+								END_IF
+								IF TManualCmd.aTAxis[iAxis].Home.Activate THEN
+									iCurrentManAxis := iAxis;
+									sCurrentState.eStep := SP_ManualStp40;
+									EXIT;
+								END_IF
+							END_FOR
+							IF TManualCmd.aTAxis[2].Specific.Activate THEN
+								alrTargetPos[PA_Z1] := alrSafePos[PA_Z1];
+								iCurrentManAxis := 2;
+								sCurrentState.eStep := SP_ManualStp2;
+							END_IF
+							IF TManualCmd.aTAxis[3].Specific.Activate THEN
+								alrTargetPos[PA_Z2] := alrSafePos[PA_Z2];
+								iCurrentManAxis := 3;
+								sCurrentState.eStep := SP_ManualStp2;
+							END_IF
+							IF TManualCmd.TSafe.Activate AND  (sCurrentState.eStep = SP_ManualStp1) THEN
+								TManualCmd.TSafe.Activate := FALSE;
+								sCurrentState.eStep := SP_ManualStp10;
+							END_IF
+							IF (sCurrentState.eStep = SP_ManualStp1) AND NOT bBypassMCR THEN
+								sCurrentState.eStep := SP_ManualStp45;
+							END_IF
+						END_IF
+					SP_ManualStp2:
+						aeMoveRobotCommand[iCurrentManAxis] := AC_MoveAtAbsPos;
+						sCurrentState.eStep := SP_ManualStp3;
+					SP_ManualStp3:
+						(* Wait until position is reached *)
+						IF (aTRobotAxis[iCurrentManAxis].eCurrentState = AS_InPosition) THEN
+							TManualCmd.aTAxisPos[iCurrentManAxis].MoveToTeach.Activate := FALSE;
+							TManualCmd.aTAxis[iCurrentManAxis].Home.Activate := FALSE;
+							TManualCmd.aTAxis[iCurrentManAxis].MoveFw.Activate := FALSE;
+							TManualCmd.aTAxis[iCurrentManAxis].MoveBw.Activate := FALSE;
+							TManualCmd.aTAxis[iCurrentManAxis].Specific.Activate := FALSE;
+							sCurrentState.eStep := SP_ManualStp1;
+						END_IF
+					SP_ManualStp10: (*Move  Z1 and Z2 to Limit*)
+						aeMoveRobotCommand[PA_Z1] := AC_MoveLimitNeg;
+						aeMoveRobotCommand[PA_Z2] := AC_MoveLimitNeg;
+						sCurrentState.eStep := SP_ManualStp11;
+					SP_ManualStp11:
+						IF aTRobotAxis[PA_Z1].eCurrentState= AS_OnLimitNeg AND aTRobotAxis[PA_Z2].eCurrentState= AS_OnLimitNeg THEN
+							sCurrentState.eStep := SP_ManualStp12;
+						ELSIF (aTRobotAxis[PA_Z1].eCurrentState= AS_OnLimitNeg AND aTRobotAxis[PA_Z2].eCurrentState = AS_InError) OR
+							    (aTRobotAxis[PA_Z1].eCurrentState= AS_InError AND aTRobotAxis[PA_Z2].eCurrentState = AS_OnLimitNeg) OR
+							    (aTRobotAxis[PA_Z1].eCurrentState= AS_InError AND aTRobotAxis[PA_Z2].eCurrentState = AS_InError) THEN
+							sCurrentState.eStep := SP_ManualStp1;
+						END_IF
+					SP_ManualStp12: (* Init X/Y  *)
+						aeMoveRobotCommand[PA_X] := AC_Init;
+						aeMoveRobotCommand[PA_Y] := AC_Init;
+						sCurrentState.eStep := SP_ManualStp13;
+					SP_ManualStp13:
+						IF aTRobotAxis[PA_X].eCurrentState= AS_InPosition AND aTRobotAxis[PA_Y].eCurrentState = AS_InPosition THEN
+							sCurrentState.eStep := SP_ManualStp14;
+						ELSIF (aTRobotAxis[PA_X].eCurrentState= AS_InPosition AND aTRobotAxis[PA_Y].eCurrentState = AS_InError) OR
+								(aTRobotAxis[PA_X].eCurrentState= AS_InError AND aTRobotAxis[PA_Y].eCurrentState = AS_InPosition) OR
+								(aTRobotAxis[PA_X].eCurrentState= AS_InError AND aTRobotAxis[PA_Y].eCurrentState = AS_InError) THEN
+							sCurrentState.eStep := SP_ManualStp1;
+						END_IF
+					SP_ManualStp14: (* Move X/Y *)
+						aeMoveRobotCommand[PA_X] := AC_MoveAtAbsPos;
+						aeMoveRobotCommand[PA_Y] := AC_MoveAtAbsPos;
+						alrTargetPos[PA_X] := alrSafePos[PA_X];
+						alrTargetPos[PA_Y] := alrSafePos[PA_Y];
+						sCurrentState.eStep := SP_ManualStp15;
+					SP_ManualStp15:
+						IF aTRobotAxis[PA_X].eCurrentState= AS_InPosition AND aTRobotAxis[PA_Y].eCurrentState = AS_InPosition THEN
+							sCurrentState.eStep := SP_ManualStp16;
+						ELSIF (aTRobotAxis[PA_X].eCurrentState= AS_InPosition AND aTRobotAxis[PA_Y].eCurrentState = AS_InError) OR
+								(aTRobotAxis[PA_X].eCurrentState= AS_InError AND aTRobotAxis[PA_Y].eCurrentState = AS_InPosition) OR
+								(aTRobotAxis[PA_X].eCurrentState= AS_InError AND aTRobotAxis[PA_Y].eCurrentState = AS_InError) THEN
+							sCurrentState.eStep := SP_ManualStp1;
+						END_IF
+					SP_ManualStp16: (* Init Z1 and Z2*)
+						aeMoveRobotCommand[PA_Z1] := AC_Init;
+						aeMoveRobotCommand[PA_Z2] := AC_Init;
+						sCurrentState.eStep := SP_ManualStp17;
+					SP_ManualStp17:
+						IF aTRobotAxis[PA_Z1].eCurrentState= AS_InPosition AND aTRobotAxis[PA_Z2].eCurrentState = AS_InPosition THEN
+							sCurrentState.eStep := SP_ManualStp18;
+						ELSIF (aTRobotAxis[PA_Z1].eCurrentState= AS_InPosition AND aTRobotAxis[PA_Z2].eCurrentState = AS_InError) OR
+								(aTRobotAxis[PA_Z1].eCurrentState= AS_InError AND aTRobotAxis[PA_Z2].eCurrentState = AS_InPosition) OR
+								(aTRobotAxis[PA_Z1].eCurrentState= AS_InError AND aTRobotAxis[PA_Z2].eCurrentState = AS_InError) THEN
+							sCurrentState.eStep := SP_ManualStp1;
+						END_IF
+					SP_ManualStp18: (* Move up Z1 and Z2 *)
+						aeMoveRobotCommand[PA_Z1] := AC_MoveAtAbsPos;
+						aeMoveRobotCommand[PA_Z2] := AC_MoveAtAbsPos;
+						alrTargetPos[PA_Z1] := alrSafePos[PA_Z1];
+						alrTargetPos[PA_Z2] := alrSafePos[PA_Z2];
+						sCurrentState.eStep := SP_ManualStp19;
+					SP_ManualStp19:
+						IF (aTRobotAxis[PA_Z1].eCurrentState= AS_InPosition OR aTRobotAxis[PA_Z1].eCurrentState = AS_InError) AND
+								(aTRobotAxis[PA_Z2].eCurrentState= AS_InPosition OR aTRobotAxis[PA_Z2].eCurrentState = AS_InError) THEN
+							sCurrentState.eStep := SP_ManualStp1;
+						END_IF
+					SP_ManualStp20:	 (* Do calibration *)
+						abStartPearlingMotor[iCurrentManAxis] := FALSE;
+						TManualCmd.aTStartMotor[iSide].Activate := FALSE;
+						abWeightTableValid[iCurrentManAxis] := FALSE;
+						FOR iSide := 0 TO 1 DO		// put the 2 brushes at Z safe position
+							alrTargetPos[PA_Z1+iSide] := alrSafePos[PA_Z1+iSide];
+							aeMoveRobotCommand[PA_Z1+iSide] := AC_MoveAtAbsPos;
+						END_FOR
+						sCurrentState.eStep := SP_ManualStp21;
+					SP_ManualStp21:
+						(* Wait until position is reached *)
+						//IF (aTRobotAxis[PA_Z1+iCurrentManAxis].eCurrentState = AS_InPosition) AND aTWaitMotorStopped[iCurrentManAxis].Q THEN
+						IF (aTRobotAxis[PA_Z1].eCurrentState = AS_InPosition) AND (aTRobotAxis[PA_Z2].eCurrentState = AS_InPosition) AND aTWaitMotorStopped[iCurrentManAxis].Q THEN
+							aTStickContactValidated[iCurrentManAxis](IN := FALSE);
+							alrLoadSensorOffset[iCurrentManAxis] := iLoadSensorValue;
+							aeProbingArea[iCurrentManAxis] := PA_WeightCalibration;
+							(* Move to load sensor position *)
+							alrTargetPos[PA_X] := alrRobotPos[PA_X, PTP_WeightCalibrationPosZ1+iCurrentManAxis];
+							alrTargetPos[PA_Y] := alrRobotPos[PA_Y, PTP_WeightCalibrationPosZ1+iCurrentManAxis];
+							aeMoveRobotCommand[PA_X] := AC_MoveAtAbsPos;
+							aeMoveRobotCommand[PA_Y] := AC_MoveAtAbsPos;
+							sCurrentState.eStep := SP_ManualStp22;
+						END_IF
+					SP_ManualStp22:
+						IF (eRobotXYStatus = AS_InPosition) THEN
+							aTStickContactValidated[iCurrentManAxis](IN := TRUE,PT := TStickContactValidTime);
+							IF aTStickContactValidated[iCurrentManAxis].Q THEN
+								(* Get sensor threshold before getting down, so we can detetced if there is a stick *)
+								aiContactThresholdArea[iCurrentManAxis , aeProbingArea[iCurrentManAxis]] := aiContactDistance[iCurrentManAxis];
+								alrProbingLimit[iCurrentManAxis] :=  alrRobotPos[PA_Z1+iCurrentManAxis, PTP_WeightCalibrationPosZ1+iCurrentManAxis] + 0.5;
+								alrTargetPos[PA_Z1+iCurrentManAxis] := alrRobotPos[PA_Z1+iCurrentManAxis, PTP_WeightCalibrationPosZ1+iCurrentManAxis];
+								aeMoveRobotCommand[PA_Z1+iCurrentManAxis] := AC_MoveAtAbsPos;
+								sCurrentState.eStep := SP_ManualStp23;
+							END_IF
+						END_IF
+					SP_ManualStp23:
+						(* Continuous move probing with analog sensor *)
+						IF (aTRobotAxis[PA_Z1+ iCurrentManAxis].eCurrentState = AS_InPosition) THEN
+							(* Move 0.5 mm above probing pos to check default sensor value *)
+							alrTargetPos[PA_Z1 + iCurrentManAxis] := alrTargetPos[PA_Z1 + iCurrentManAxis] - 0.5;
+							alrCurrentSpeed[PA_Z1 + iCurrentManAxis] := alrMaxRobotSpeed[PA_Z1 + iCurrentManAxis];
+							aeMoveRobotCommand[PA_Z1 + iCurrentManAxis] := AC_MoveAtAbsPos;
+							aTStickContactValidated[iCurrentManAxis](IN := FALSE);
+							sCurrentState.eStep := SP_ManualStp24;
+						ELSIF (aiContactDistance[iCurrentManAxis] > aiContactThresholdArea[iCurrentManAxis , aeProbingArea[iCurrentManAxis]] + alrSensorRate[iCurrentManAxis] * 0.5) THEN
+							(* Stick is present, abort the process *)
+							aeMoveRobotCommand[PA_Z1+iCurrentManAxis] := AC_Stop;
+							bSecurityError := TRUE;
+							iDebugPos := 6;
+							iDebugSide := iCurrentManAxis;
+							bCalibrationInProgress := FALSE;
+							sCurrentState.eStep := SP_ManualStp1;
+						END_IF
+					SP_ManualStp24:
+						IF (aTRobotAxis[PA_Z1 + iCurrentManAxis].eCurrentState = AS_InPosition) THEN
+							aTStickContactValidated[iCurrentManAxis](IN := TRUE,PT := TStickContactValidTime);
+							IF aTStickContactValidated[iCurrentManAxis].Q THEN
+								aiContactThresholdArea[iCurrentManAxis , aeProbingArea[iCurrentManAxis]] := aiContactDistance[iCurrentManAxis];
+								(* Move down slowly until we get contact *)
+								alrTargetPos[PA_Z1 + iCurrentManAxis] := alrProbingLimit[iCurrentManAxis];
+								alrCurrentSpeed[PA_Z1 + iCurrentManAxis] := lrSensorZSpeed;
+								aeMoveRobotCommand[PA_Z1 + iCurrentManAxis] := AC_MoveAtAbsPos;
+								sCurrentState.eStep := SP_ManualStp25;
+							END_IF
+						END_IF
+					SP_ManualStp25:
+						IF (aiContactDistance[iCurrentManAxis] >aiContactThresholdArea[iCurrentManAxis , aeProbingArea[iCurrentManAxis]] + alrSensorRate[iCurrentManAxis] * lrProbingThreshold) THEN
+							aTStickContactValidated[iCurrentManAxis](IN := FALSE);
+							aeMoveRobotCommand[PA_Z1 + iCurrentManAxis] := AC_Stop;
+							sCurrentState.eStep := SP_ManualStp26;
+						ELSIF (aTRobotAxis[PA_Z1 + iCurrentManAxis].eCurrentState = AS_InPosition) THEN
+							aeMoveRobotCommand[PA_Z1+iCurrentManAxis] := AC_Stop;
+							bSecurityError := TRUE;
+							iDebugPos := 7;
+							iDebugSide := iCurrentManAxis;
+							bCalibrationInProgress := FALSE;
+							sCurrentState.eStep := SP_ManualStp1;
+						END_IF
+					SP_ManualStp26:
+						IF (aTRobotAxis[PA_Z1 + iCurrentManAxis].eCurrentState = AS_InPosition) THEN
+							aTStickContactValidated[iCurrentManAxis](IN := TRUE,PT := TStickContactValidTime);
+							IF aTStickContactValidated[iCurrentManAxis].Q THEN
+								alrProbingPos[iCurrentManAxis] := aTRobotAxis[PA_Z1 + iCurrentManAxis].lrCurrentPos - (aiContactDistance[iCurrentManAxis] - aiContactThresholdArea[iCurrentManAxis , aeProbingArea[iCurrentManAxis]])/alrSensorRate[iCurrentManAxis];
+								(* Move 2 mm above probing pos to check 1st measure *)
+								alrTargetPos[PA_Z1 + iCurrentManAxis] := aTRobotAxis[PA_Z1 + iCurrentManAxis].lrCurrentPos - 2;
+								alrCurrentSpeed[PA_Z1 + iCurrentManAxis] := alrMaxRobotSpeed[PA_Z1 + iCurrentManAxis];
+								aeMoveRobotCommand[PA_Z1 + iCurrentManAxis] := AC_MoveAtAbsPos;
+								sCurrentState.eStep := SP_ManualStp27;
+							END_IF
+						END_IF
+					SP_ManualStp27:
+						IF (aTRobotAxis[PA_Z1 + iCurrentManAxis].eCurrentState = AS_InPosition) THEN
+							(* Move to contact position *)
+							alrTargetPos[PA_Z1 + iCurrentManAxis] := alrTargetPos[PA_Z1 + iCurrentManAxis]+2;
+							aeMoveRobotCommand[PA_Z1 + iCurrentManAxis] := AC_MoveAtAbsPos;
+							aTStickContactValidated[iCurrentManAxis](IN := FALSE);
+							sCurrentState.eStep := SP_ManualStp28;
+						END_IF
+					SP_ManualStp28:
+						IF (aTRobotAxis[PA_Z1 + iCurrentManAxis].eCurrentState = AS_InPosition) THEN
+							aTStickContactValidated[iCurrentManAxis](IN := TRUE,PT := TStickContactValidTime);
+							IF aTStickContactValidated[iCurrentManAxis].Q THEN
+								alrCheckProbingPos[iCurrentManAxis] := aTRobotAxis[PA_Z1 + iCurrentManAxis].lrCurrentPos - (aiContactDistance[iCurrentManAxis] - aiContactThresholdArea[iCurrentManAxis , aeProbingArea[iCurrentManAxis]])/alrSensorRate[iCurrentManAxis];
+								IF (ABS(alrProbingPos[iCurrentManAxis] - alrCheckProbingPos[iCurrentManAxis]) < 0.05) AND (ABS(alrProbingPos[iCurrentManAxis] -  alrRobotPos[PA_Z1+iCurrentManAxis, PTP_WeightCalibrationPosZ1+iCurrentManAxis]) < 0.5) THEN
+									sCurrentState.eStep := SP_ManualStp29;
+								ELSE
+									bSecurityError := TRUE;
+									iDebugPos := 8;
+									iDebugSide := iCurrentManAxis;
+									bCalibrationInProgress := FALSE;
+									sCurrentState.eStep := SP_ManualStp1;
+								END_IF
+							END_IF
+						END_IF
+					SP_ManualStp29:
+						aTStickContactValidated[iCurrentManAxis](IN := FALSE);
+						iTableIndex := 0;
+						lrBasePos := alrProbingPos[iCurrentManAxis] - lrWeightCalibrationStartOffsetZ;
+						alrTargetPos[PA_Z1+iCurrentManAxis] := lrBasePos;
+						alrCurrentSpeed[PA_Z1+iCurrentManAxis] := lrSensorZSpeed;
+						aeMoveRobotCommand[PA_Z1+iCurrentManAxis] := AC_MoveAtAbsPos;
+						sCurrentState.eStep := SP_ManualStp30;
+					SP_ManualStp30:
+						IF (aTRobotAxis[PA_Z1+iCurrentManAxis].eCurrentState = AS_InPosition) THEN
+							(* Measure delta contact position*)
+							aTStickContactValidated[iCurrentManAxis](IN := TRUE,PT := TStickContactValidTime);
+							IF aTStickContactValidated[iCurrentManAxis].Q THEN
+								alrWeightTable[iCurrentManAxis,iTableIndex] := (INT_TO_LREAL(iLoadSensorValue) - alrLoadSensorOffset[iCurrentManAxis]) / lrLoadSensorRate;
+								IF (iTableIndex < C_WEIGHT_TABLE_MAX) THEN
+									iTableIndex := iTableIndex+1;
+									alrTargetPos[PA_Z1+iCurrentManAxis] := lrBasePos + INT_TO_LREAL(iTableIndex)*lrLoadSensorStep;
+									aeMoveRobotCommand[PA_Z1+iCurrentManAxis] := AC_MoveAtAbsPos;
+									aTStickContactValidated[iCurrentManAxis](IN := FALSE);
+								ELSE
+									(* Calculate g to mm ratio *)
+									alrRatiog2mm[iCurrentManAxis] := 1/((alrWeightTable[iCurrentManAxis,C_WEIGHT_TABLE_MAX] - alrWeightTable[iCurrentManAxis,10])/((C_WEIGHT_TABLE_MAX - 10)*lrLoadSensorStep));
+									(* Move up to safe *)
+									alrTargetPos[PA_Z1+iCurrentManAxis] := alrSafePos[PA_Z1+iCurrentManAxis];
+									alrCurrentSpeed[PA_Z1+iCurrentManAxis] := alrMaxRobotSpeed[PA_Z1+iCurrentManAxis];
+									aeMoveRobotCommand[PA_Z1+iCurrentManAxis] := AC_MoveAtAbsPos;
+									sCurrentState.eStep := SP_ManualStp31;
+								END_IF
+							END_IF
+						END_IF
+					SP_ManualStp31:
+						IF (aTRobotAxis[PA_Z1+iCurrentManAxis].eCurrentState = AS_InPosition) THEN
+							abWeightTableValid[iCurrentManAxis] := TRUE;
+							bCalibrationInProgress := FALSE;
+							sCurrentState.eStep := SP_ManualStp1;
+						END_IF
+					SP_ManualStp40 : (* Init axis *)
+						aeMoveRobotCommand[iCurrentManAxis] := AC_Home;
+						sCurrentState.eStep := SP_ManualStp41;
+					SP_ManualStp41 : (* Rotate the turn over to go to index position *)
+						CASE aTRobotAxis[iCurrentManAxis].eCurrentState OF
+							AS_InPosition, AS_InError:
+								FOR iAxis := 0 TO 4 DO
+									TManualCmd.aTAxis[iCurrentManAxis].Home.Activate := FALSE;
+									TManualCmd.aTAxis[iCurrentManAxis].MoveFw.Activate := FALSE;
+									TManualCmd.aTAxis[iCurrentManAxis].MoveBw.Activate := FALSE;
+								END_FOR
+								sCurrentState.eStep := SP_ManualStp1;
+						END_CASE
+					SP_ManualStp45:
+						IF bMCRReady THEN
+							yMCRChannel := 1;
+							sCurrentState.eStep := SP_ManualStp46;
+						END_IF
+					SP_ManualStp46:
+						(* Read speed *)
+						eMCRCommand := MCRC_ReadSpeed;
+						sCurrentState.eStep := SP_ManualStp47;
+					SP_ManualStp47:
+						IF bMCRReady THEN
+							TManualCmd.aiMotorSpeed[yMCRChannel-1] := TMCRDrv.iSpeed;
+							IF yMCRChannel = 1 THEN
+								yMCRChannel := 2;
+								sCurrentState.eStep := SP_ManualStp46;
+							ELSE
+								yMCRChannel := 1;
+								sCurrentState.eStep := SP_ManualStp48;
+							END_IF
+						END_IF
+					SP_ManualStp48:
+						(* Read current *)
+						eMCRCommand := MCRC_ReadCurrent;
+						sCurrentState.eStep := SP_ManualStp49;
+					SP_ManualStp49:
+						IF bMCRReady THEN
+							TManualCmd.arMotorCurrent[yMCRChannel-1] := LREAL_TO_REAL(TMCRDrv.lrCurrent);
+							IF yMCRChannel = 1 THEN
+								yMCRChannel := 2;
+								sCurrentState.eStep := SP_ManualStp48;
+							ELSE
+								yMCRChannel := 1;
+								sCurrentState.eStep := SP_ManualStp50;
+							END_IF
+						END_IF
+					SP_ManualStp50:
+						(* Set Ratio*)
+						eMCRCommand := MCRC_SetRatio;
+						TMCRDrv.lrRatio := asStickDataMMI[yMCRChannel - 1].lrMCRRatio;
+						sCurrentState.eStep := SP_ManualStp51;
+					SP_ManualStp51:
+						IF bMCRReady THEN
+							IF yMCRChannel = 1 THEN
+								yMCRChannel := 2;
+								sCurrentState.eStep := SP_ManualStp50;
+							ELSE
+								yMCRChannel := 1;
+								sCurrentState.eStep := SP_ManualStp52;
+							END_IF
+						END_IF
+					SP_ManualStp52:
+						(* Set Speed*)
+						eMCRCommand := MCRC_SetSpeed;
+						TMCRDrv.iSpeedSetpoint := TManualCmd.aiSpindleSpeedSetpoint[yMCRChannel - 1];
+						sCurrentState.eStep := SP_ManualStp53;
+					SP_ManualStp53:
+						IF bMCRReady THEN
+							IF yMCRChannel = 1 THEN
+								yMCRChannel := 2;
+								sCurrentState.eStep := SP_ManualStp52;
+							ELSE
+								yMCRChannel := 1;
+								sCurrentState.eStep := SP_ManualStp54;
+							END_IF
+						END_IF
+					SP_ManualStp54:
+						(* Set Parameter*)
+						eMCRCommand := MCRC_SetParam;
+						TMCRDrv.iOffsetCurrent := iMCROffsetCurrent[yMCRChannel - 1];
+						TMCRDrv.iCurrentRatio := iMCRCurrentRatio[yMCRChannel - 1];
+						sCurrentState.eStep := SP_ManualStp55;
+					SP_ManualStp55:
+						IF bMCRReady THEN
+							IF yMCRChannel = 1 THEN
+								yMCRChannel := 2;
+								sCurrentState.eStep := SP_ManualStp54;
+							ELSE
+								yMCRChannel := 1;
+								sCurrentState.eStep := SP_ManualStp1;
+							END_IF
+						END_IF
+				END_CASE
+				FOR iSide := 0 TO 1 DO
+					abOpenChuck[iSide] := TManualCmd.aTOpenChuck[iSide].Activate;
+					abActivateEject[iSide] := TManualCmd.aTEjectStick[iSide].Activate;
+					abActivateBlowing[iSide] := TManualCmd.aTActivateBlowing[iSide].Activate;
+					abAspirationPearling[iSide] := TManualCmd.TActivateAspirationTable[iSide].Activate;
+				END_FOR
+				bAspirationSharpenOn := TManualCmd.TActivateAspirationSharpen.Activate;
+			MS_Paused:
+				IF bStopReq THEN
+					sCurrentState.eStatus := MS_Ready;
+					sCurrentState.eStep := SP_RunStp1;
+				END_IF
+		END_CASE
+	MC_Init :
+		IF sCurrentState.bInitDone THEN
+			sCurrentState.eStep := SP_InitStp50;
+		ELSE
+			sCurrentState.eStep := SP_InitStp1;
+		END_IF
+		sCurrentState.eStatus := MS_Init;
+	MC_Run :
+		IF (sCurrentState.eStep = SP_RunStp91) THEN
+			sCurrentState.eStep := SP_RunStp92;
+		END_IF
+		sCurrentState.eStatus := MS_Running;
+	MC_Manual :
+		sCurrentState.bInitDone := FALSE;
+		sCurrentState.eStatus := MS_Manual;
+		sCurrentState.eStep := SP_ManualStp0;
+	MC_Stop :
+		//eMCRCommand := MCRC_UpdateMemory;				// TODO : HFO, Problème de comunication, impossible de mettre à jour les chips, controle si ok?
+		sCurrentState.eStatus := MS_Stopped;
+END_CASE;
+
+(* The pearling motor doesn't run if not in production *)
+IF (sCurrentState.eStatus <> MS_Running) AND (sCurrentState.eStatus <> MS_Manual) THEN
+	FOR iSide := 0 TO 1 DO
+		abStartPearlingMotor[iSide] := FALSE;
+		abActivateBlowing[iSide] := FALSE;
+	END_FOR
+END_IF
+IF (sCurrentState.eStatus = MS_Running) THEN
+	FOR iSide:=0 TO 1 DO
+		(* Force motor running if possible *)
+		IF NOT abDoProbing[iSide] AND NOT abChangeStick[iSide]  AND NOT  abSharpenStick[iSide] AND abChuckClosed[iSide] AND
+				((sCurrentState.eStep < SP_RunStp30) OR
+				(sCurrentState.eStep > SP_RunStp33)) THEN
+			IF bKeepBothHeadWarm THEN
+				abStartPearlingMotor[iSide] := TRUE;
+			ELSE
+				abStartPearlingMotor[iSide] := abUseSpindle[iSide];
+			END_IF
+		END_IF
+	END_FOR
+	FOR iSide:=0 TO 1 DO
+		abActivateBlowing[iSide] := abStartPearlingMotor[PH_Left] OR abStartPearlingMotor[PH_Right]; (* Activate blowing if at least one head is pearling *)
+	END_FOR
+END_IF
+
+IF bResetErrors THEN
+	sCurrentState.bInError := FALSE;
+END_IF
+
+(* Define dynamics *)
+
+FOR iAxis:=0 TO 3 DO
+	IF (aeMoveRobotCommand[iAxis] = AC_MoveAtAbsPos) THEN
+		IF (ABS(aTRobotAxis[iAxis].lrCurrentPos - alrTargetPos[iAxis]) > 10) THEN
+			alrDynParams[iAxis] := alrLowDynParams[iAxis];
+		ELSE
+			alrDynParams[iAxis] := alrHighDynParams[iAxis];
+		END_IF
+	END_IF
+END_FOR
+
+
+IF ((ABS(aTRobotAxis[PA_X].lrCurrentPos - alrTargetPos[PA_X]) > lrMaxXYMoveAllowed) AND (aeMoveRobotCommand[PA_X] <> AC_None)) OR
+		((ABS(aTRobotAxis[PA_Y].lrCurrentPos - alrTargetPos[PA_Y]) > lrMaxXYMoveAllowed) AND (aeMoveRobotCommand[PA_Y] <> AC_None)) THEN
+	IF (aTRobotAxis[PA_Z1].lrCurrentPos > (alrSafePos[PA_Z1] + lrSafeTolerance)) OR
+			(aTRobotAxis[PA_Z2].lrCurrentPos > (alrSafePos[PA_Z2] + lrSafeTolerance)) THEN
+		IF eStickStep<> SP_RunStp61 AND eStickStep<> SP_RunStp62 THEN
+			aeMoveRobotCommand[PA_X] := AC_ForceStop;
+			aeMoveRobotCommand[PA_Y] := AC_ForceStop;
+			sCurrentState.bInitDone := FALSE;
+			bSecurityError := TRUE;
+			iDebugPos := 9;
+			iDebugSide := -1;
+		END_IF
+	END_IF
+END_IF
+
+IF (sCurrentState.eStatus = MS_Manual) THEN
+	FOR iAxis:=0 TO 3 DO
+		IF bManualZIsSafe THEN
+			alrCurrentSpeed[iAxis] := aTRobotAxis[iAxis].lrFastManualSpeed;
+		ELSE
+			alrCurrentSpeed[iAxis] :=  aTRobotAxis[iAxis].lrManualSpeed;
+		END_IF
+	END_FOR
+END_IF
+
+(* Robot command *)
+aTRobotAxis[PA_X](
+	eCommand 		:= aeMoveRobotCommand[PA_X],
+	lrTargetPos 		:= alrTargetPos[PA_X],
+	lrTargetSpeed 	:= alrCurrentSpeed[PA_X],
+	lrAcceleration 	:= alrDynParams[PA_X].Acc,
+	lrDeceleration 	:= alrDynParams[PA_X].Dec,
+	lrJerk 			:= alrDynParams[PA_X].Jerk,
+	sAxis		 	:= sXAxisRef,
+	bHomeSensor 	:= bHomeX,
+	eAxisType		:= AT_AX5000,
+	bPowerIsOn		:= bPowerOn,
+	bPosLimitSwitch	:= NOT bLimitPosX,
+	bNegLimitSwitch	:= NOT bLimitNegX,
+	lrMoveOutDist	:= 50,
+	bResetErrors	 	:= bResetErrors,
+	stServoButton		:= TManualCmd.aTAxis[PA_X].ServoON
+);
+aeMoveRobotCommand[PA_X] := AC_None;
+bXAxisError := (aTRobotAxis[PA_X].eCurrentState = AS_InError);
+
+aTRobotAxis[PA_Y](
+	eCommand 		:= aeMoveRobotCommand[PA_Y],
+	lrTargetPos 		:= alrTargetPos[PA_Y],
+	lrTargetSpeed 	:= alrCurrentSpeed[PA_Y],
+	lrAcceleration 	:= alrDynParams[PA_Y].Acc,
+	lrDeceleration 	:= alrDynParams[PA_Y].Dec,
+	lrJerk 			:= alrDynParams[PA_Y].Jerk,
+	sAxis		 	:= sYAxisRef,
+	bHomeSensor 	:= bHomeY,
+	eAxisType		:= AT_AX5000,
+	bPowerIsOn		:= bPowerOn,
+	bPosLimitSwitch	:= NOT bLimitPosY,
+	bNegLimitSwitch	:= NOT bLimitNegY,
+	lrMoveOutDist	:= 50,
+	bResetErrors	 	:= bResetErrors,
+	stServoButton		:= TManualCmd.aTAxis[PA_Y].ServoON
+);
+aeMoveRobotCommand[PA_Y] := AC_None;
+bYAxisError := (aTRobotAxis[PA_Y].eCurrentState = AS_InError);
+
+aTRobotAxis[PA_Z1](
+	eCommand 		:= aeMoveRobotCommand[PA_Z1],
+	lrTargetPos 		:= alrTargetPos[PA_Z1],
+	lrTargetSpeed 	:= alrCurrentSpeed[PA_Z1],
+	lrAcceleration 	:= alrDynParams[PA_Z1].Acc,
+	lrDeceleration 	:= alrDynParams[PA_Z1].Dec,
+	lrJerk 			:= alrDynParams[PA_Z1].Jerk,
+	sAxis		 	:= sZ1AxisRef,
+	bHomeSensor 	:= bHomeZ1,
+	bPosLimitSwitch	:= NOT bLimitPosZ1,
+	bNegLimitSwitch	:= NOT bLimitNegZ1,
+	eAxisType		:= AT_Standard,
+	bPowerIsOn		:= bPowerOn,
+	bResetErrors	 	:= bResetErrors,
+	lrMoveOutDist	:= 10,
+	stServoButton		:= TManualCmd.aTAxis[PA_Z1].ServoON
+);
+aeMoveRobotCommand[PA_Z1] := AC_None;
+bZ1AxisError := (aTRobotAxis[PA_Z1].eCurrentState = AS_InError);
+
+aTRobotAxis[PA_Z2](
+	eCommand 		:= aeMoveRobotCommand[PA_Z2],
+	lrTargetPos 		:= alrTargetPos[PA_Z2],
+	lrTargetSpeed 	:= alrCurrentSpeed[PA_Z2],
+	lrAcceleration 	:= alrDynParams[PA_Z2].Acc,
+	lrDeceleration 	:= alrDynParams[PA_Z2].Dec,
+	lrJerk 			:= alrDynParams[PA_Z2].Jerk,
+	sAxis		 	:= sZ2AxisRef,
+	bHomeSensor 	:= bHomeZ2,
+	bPosLimitSwitch	:= NOT bLimitPosZ2,
+	bNegLimitSwitch	:= NOT bLimitNegZ2,
+	eAxisType		:= AT_Standard,
+	bPowerIsOn		:= bPowerOn,
+	bResetErrors	 	:= bResetErrors,
+	lrMoveOutDist	:= 10,
+	stServoButton		:= TManualCmd.aTAxis[PA_Z2].ServoON
+);
+aeMoveRobotCommand[PA_Z2] := AC_None;
+bZ2AxisError := (aTRobotAxis[PA_Z2].eCurrentState = AS_InError);
+
+(* Get move result *)
+eRobotXYStatus := AS_Moving;
+IF (aTRobotAxis[PA_X].eCurrentState = AS_InError) OR (aTRobotAxis[PA_Y].eCurrentState = AS_InError) THEN
+	eRobotXYStatus := AS_InError;
+ELSIF (aTRobotAxis[PA_X].eCurrentState = AS_InPosition) AND (aTRobotAxis[PA_Y].eCurrentState = AS_InPosition) THEN
+		eRobotXYStatus := AS_InPosition;
+END_IF
+
+(* Check gripper error *)
+aTCheckChuck[PH_Left](
+	bJackGoOut	:= abOpenChuck[PH_Left],
+	bJackIsIn	:= abChuckClosed[PH_Left],
+	bJackIsOut	:= abChuckOpened[PH_Left],
+	bResetErrors := bResetErrors,
+	bJackError	=> bChuck1Error
+);
+aTCheckChuck[PH_Right](
+	bJackGoOut	:= abOpenChuck[PH_Right],
+	bJackIsIn	:= abChuckClosed[PH_Right],
+	bJackIsOut	:= abChuckOpened[PH_Right],
+	bResetErrors := bResetErrors,
+	bJackError	=> bChuck2Error
+);
+
+TMCRDrv(
+	iComPort			:= iComPort,
+	yChannel			:= yMCRChannel,
+	iMinCurrent			:= 5,
+	iCheckTime			:= 10,
+	bCommandExecuted	=> bMCRReady,
+	bCommandError		=> bMCRError,
+	eCommand			:= eMCRCommand,
+	RxBuffer			:= sRecData,
+	TxBuffer			:= sTransData,
+	bReset				:= bResetErrors,
+	ayChannelStatus		=> ayChannelStatus,
+
+);
+
+IF bBypassMCR THEN
+	bMCRError := FALSE;
+END_IF
+
+(* Handle errors *)
+IF bResetErrors THEN
+	(* Reset all errors not related to controls *)
+	FOR iSide := 0 TO 1 DO
+		abSpindleError[iSide] := FALSE;
+		abStickBroken[iSide] := FALSE;
+		abMotorError[iSide] := FALSE;
+		abCurrentReadError[iSide] := FALSE;
+		abPearlingWeightOutOfToleranceError[iSide] := FALSE;
+		abCurrentLimitWarning[iSide] := FALSE;
+	END_FOR
+	bSecurityError := FALSE;
+	bStickNotTakenError := FALSE;
+	bLeftSpindleUsedWarning := FALSE;
+	bRightSpindleUsedWarning := FALSE;
+	bLeftMotorUsedWarning := FALSE;
+	bRightMotorUsedWarning := FALSE;
+END_IF
+
+
+IF bXAxisError OR bYAxisError OR bZ1AxisError OR bZ2AxisError OR bChuck1Error OR bChuck2Error OR abSpindleError[PH_Left] OR abSpindleError[PH_Right] OR bSecurityError OR bMCRError OR abMotorError[PH_Left] OR abMotorError[PH_Right] OR
+		 ((abStickBroken[PH_Left] OR abStickBroken[PH_Right]) AND sStickDataShared.sStickDataMMIShared.bStopOnStickBreak) OR
+		(( abPearlingWeightOutOfToleranceError[PH_Left] OR abPearlingWeightOutOfToleranceError[PH_Right]) AND sStickDataShared.sStickDataMMIShared.bStopOnWeightOutOfTolerance) THEN
+	sCurrentState.bInError := TRUE;
+	IF (sCurrentState.eStatus <> MS_Manual) AND (sCurrentState.eStatus <> MS_Stopped) AND (sCurrentState.eStatus <> MS_Init) THEN
+		sCurrentState.eStatus := MS_Ready;
+	END_IF
+END_IF
+
+IF NOT bPowerOn OR bXAxisError OR bYAxisError OR bZ1AxisError OR bZ2AxisError OR bSecurityError OR bMCRError THEN
+	sCurrentState.bInitDone := FALSE;
+	IF (sCurrentState.eStatus <> MS_Manual) THEN
+		sCurrentState.eStatus := MS_Stopped;
+	END_IF
+END_IF
+
+
+IF NOT bPowerOn OR bSecurityError THEN
+	bClearZRef := TRUE;
+END_IF
+
+IF bClearZRef THEN
+	FOR i:= 0 TO 3 DO
+		FOR j:= 0 TO 1 DO
+			FOR iSide := 0 TO 1 DO
+				abZRefTaken[i, j, iSide] := FALSE;
+			END_FOR
+		END_FOR
+	END_FOR
+	bClearZRef := FALSE;
+END_IF
+
+(* Security *)
+FOR iSide:=0 TO 1 DO
+	IF abOpenChuck[iSide] OR NOT abChuckClosed[iSide] THEN
+		abStartPearlingMotor[iSide] := FALSE;
+	END_IF
+	IF NOT abUseSpindle[iSide] AND  (sCurrentState.eStatus <> MS_Manual) THEN
+		abStartPearlingMotor[iSide] := FALSE;
+	END_IF
+END_FOR
+
+sCurrentState.bRunning := (sCurrentState.eStatus = MS_Running);
+sCurrentState.bWarning := bLeftSpindleUsedWarning OR bRightSpindleUsedWarning OR bLeftMotorUsedWarning OR bRightMotorUsedWarning OR bRightSpindleLimitWarning;
+
+bModuleError := sCurrentState.bInError;
+IF (sCurrentState.eStatus <> MS_Running) THEN eRunStatus := RS_NotRunning; END_IF
+
+TDebug.iStep := sCurrentState.eStep;
+TDebug.iStickStep := eStickStep;
+FOR iSide := 0 TO 1 DO
+	TDebug.aiProbingStep[iSide] := aeProbingStep[iSide];
+	TDebug.abOpenChuck[iSide] := abOpenChuck[iSide];
+	TDebug.abSharpenStick[iSide] := abSharpenStick[iSide];
+	TDebug.abChangeStick[iSide] := abChangeStick[iSide];
+	TDebug.abUseSpindle[iSide] := abUseSpindle[iSide];
+END_FOR
+
+(* Handle motor and spindle running timers *)
+FOR iSide := 0 TO 1 DO
+	adwMotorRunningHours[iSide] := aTMotorCounter[iSide].dwHours;
+	adwSpindleRunningHours[iSide] := aTSpindleCounter[iSide].dwHours;
+	aTDetectSpindleCooled[iSide](IN := NOT abStartPearlingMotor[iSide], pt := T#60M);
+	IF (aTDetectSpindleCooled[iSide].Q) THEN
+		abNeedSpindleHeatOn[iSide] := TRUE;
+	END_IF
+	aTWaitSpindleHeatOn[iSide](IN := abStartPearlingMotor[iSide], pt := T#10M);
+	IF (aTWaitSpindleHeatOn[iSide].Q) THEN
+		abNeedSpindleHeatOn[iSide] := FALSE;
+	END_IF
+	IF (NOT abUseSpindle[iSide]) THEN
+		abNeedSpindleHeatOn[iSide] := FALSE;
+	END_IF
+END_FOR
+bLeftSpindleHeatWarning := abStartPearlingMotor[PH_Left] AND abNeedSpindleHeatOn[PH_Left];
+bRightSpindleHeatWarning := abStartPearlingMotor[PH_Right] AND abNeedSpindleHeatOn[PH_Right];
+(* Set motor/spindle warning only every hour *)
+IF aTSpindleCounter[PH_Left].bHoursTrig THEN
+	bLeftSpindleUsedWarning := (adwSpindleRunningHours[PH_Left] > dwMaxSpindleRunningHours);
+END_IF
+IF aTSpindleCounter[PH_Right].bHoursTrig THEN
+	bRightSpindleUsedWarning := (adwSpindleRunningHours[PH_Right] > dwMaxSpindleRunningHours);
+END_IF
+IF aTMotorCounter[PH_Left].bHoursTrig THEN
+	bLeftMotorUsedWarning := (adwMotorRunningHours[PH_Left] > dwMaxMotorRunningHours);
+END_IF
+IF aTMotorCounter[PH_Right].bHoursTrig THEN
+	bRightMotorUsedWarning := (adwMotorRunningHours[PH_Right] > dwMaxMotorRunningHours);
+END_IF
+
+(* Optimize code *)
+bStartPearlingMotor1 := abStartPearlingMotor[PH_Left];
+bStartPearlingMotor2 := abStartPearlingMotor[PH_Right];
+bOpenChuck1 := abOpenChuck[PH_Left];
+bOpenChuck2 := abOpenChuck[PH_Right];
+bActivateEject1 := abActivateEject[PH_Left];
+bActivateEject2 := abActivateEject[PH_Right];
+bSpindle1Error := abSpindleError[PH_Left];
+bSpindle2Error := abSpindleError[PH_Right];
+bStickContact1 := abStickContact[PH_Left];
+bStickContact2 := abStickContact[PH_Right];
+bActivateBlowing1 := abActivateBlowing[PH_Left];
+bActivateBlowing2 := abActivateBlowing[PH_Right];
+bCurrent1ReadError := abCurrentReadError[PH_Left];
+bCurrent2ReadError := abCurrentReadError[PH_Right];
+bMotor1Error := abMotorError[PH_Left];
+bMotor2Error := abMotorError[PH_Right];
+bAspirationPearling1On := abAspirationPearling[PH_Left];
+bAspirationPearling2On := abAspirationPearling[PH_Right];
+bStick1Broken := abStickBroken[PH_Left];
+bStick2Broken := abStickBroken[PH_Right];
+bPearlingWeight1OutOfToleranceError := abPearlingWeightOutOfToleranceError[PH_Left];
+bPearlingWeight2OutOfToleranceError := abPearlingWeightOutOfToleranceError[PH_Right];
+bLeftSpindleLimitWarning := abCurrentLimitWarning[PH_Left];
+bRightSpindleLimitWarning := abCurrentLimitWarning[PH_Right];
+atStickValidateTime[PH_Left] := TIME_TO_LREAL(aTStickContactValidated[PH_Left].ET);
+atStickValidateTime[PH_Right] := TIME_TO_LREAL(aTStickContactValidated[PH_Right].ET);
+
+ai_ProbingStep[0] := aeProbingStep[0];
+ai_ProbingStep[1] := aeProbingStep[1];
+i_StickStep := eStickStep;]]></ST>
+    </Implementation>
+    <LineIds Name="PearlingHdl">
+      <LineId Id="8978" Count="4" />
+      <LineId Id="8977" Count="0" />
+      <LineId Id="322" Count="12" />
+      <LineId Id="3172" Count="0" />
+      <LineId Id="3171" Count="0" />
+      <LineId Id="335" Count="30" />
+      <LineId Id="4673" Count="0" />
+      <LineId Id="366" Count="0" />
+      <LineId Id="4658" Count="0" />
+      <LineId Id="4661" Count="0" />
+      <LineId Id="4671" Count="0" />
+      <LineId Id="4674" Count="0" />
+      <LineId Id="4672" Count="0" />
+      <LineId Id="369" Count="44" />
+      <LineId Id="9679" Count="0" />
+      <LineId Id="414" Count="84" />
+      <LineId Id="4698" Count="0" />
+      <LineId Id="4727" Count="0" />
+      <LineId Id="4714" Count="0" />
+      <LineId Id="4707" Count="0" />
+      <LineId Id="4720" Count="1" />
+      <LineId Id="4752" Count="6" />
+      <LineId Id="4709" Count="0" />
+      <LineId Id="4730" Count="0" />
+      <LineId Id="5126" Count="1" />
+      <LineId Id="5130" Count="0" />
+      <LineId Id="5125" Count="0" />
+      <LineId Id="4700" Count="0" />
+      <LineId Id="5129" Count="0" />
+      <LineId Id="4701" Count="2" />
+      <LineId Id="4682" Count="2" />
+      <LineId Id="502" Count="11" />
+      <LineId Id="3890" Count="0" />
+      <LineId Id="514" Count="2" />
+      <LineId Id="3891" Count="0" />
+      <LineId Id="517" Count="10" />
+      <LineId Id="3519" Count="4" />
+      <LineId Id="3535" Count="0" />
+      <LineId Id="3524" Count="10" />
+      <LineId Id="3540" Count="0" />
+      <LineId Id="3888" Count="0" />
+      <LineId Id="3541" Count="4" />
+      <LineId Id="3889" Count="0" />
+      <LineId Id="3546" Count="10" />
+      <LineId Id="528" Count="13" />
+      <LineId Id="3887" Count="0" />
+      <LineId Id="542" Count="15" />
+      <LineId Id="9677" Count="0" />
+      <LineId Id="558" Count="13" />
+      <LineId Id="8631" Count="0" />
+      <LineId Id="573" Count="10" />
+      <LineId Id="6843" Count="0" />
+      <LineId Id="6905" Count="0" />
+      <LineId Id="6846" Count="0" />
+      <LineId Id="6848" Count="8" />
+      <LineId Id="6858" Count="0" />
+      <LineId Id="6860" Count="1" />
+      <LineId Id="6865" Count="0" />
+      <LineId Id="6862" Count="2" />
+      <LineId Id="6859" Count="0" />
+      <LineId Id="6844" Count="0" />
+      <LineId Id="6857" Count="0" />
+      <LineId Id="6866" Count="18" />
+      <LineId Id="6845" Count="0" />
+      <LineId Id="6839" Count="3" />
+      <LineId Id="6838" Count="0" />
+      <LineId Id="6837" Count="0" />
+      <LineId Id="592" Count="41" />
+      <LineId Id="6904" Count="0" />
+      <LineId Id="634" Count="18" />
+      <LineId Id="9676" Count="0" />
+      <LineId Id="653" Count="159" />
+      <LineId Id="6886" Count="0" />
+      <LineId Id="813" Count="7" />
+      <LineId Id="6887" Count="0" />
+      <LineId Id="821" Count="18" />
+      <LineId Id="6497" Count="0" />
+      <LineId Id="841" Count="12" />
+      <LineId Id="5471" Count="0" />
+      <LineId Id="855" Count="76" />
+      <LineId Id="10022" Count="0" />
+      <LineId Id="932" Count="45" />
+      <LineId Id="6157" Count="0" />
+      <LineId Id="978" Count="106" />
+      <LineId Id="6889" Count="0" />
+      <LineId Id="1085" Count="0" />
+      <LineId Id="6890" Count="0" />
+      <LineId Id="6894" Count="1" />
+      <LineId Id="6891" Count="0" />
+      <LineId Id="6893" Count="0" />
+      <LineId Id="6892" Count="0" />
+      <LineId Id="1087" Count="3" />
+      <LineId Id="1092" Count="76" />
+      <LineId Id="6896" Count="2" />
+      <LineId Id="6901" Count="2" />
+      <LineId Id="6900" Count="0" />
+      <LineId Id="1169" Count="0" />
+      <LineId Id="9674" Count="0" />
+      <LineId Id="1170" Count="133" />
+      <LineId Id="1308" Count="35" />
+      <LineId Id="9328" Count="1" />
+      <LineId Id="1344" Count="0" />
+      <LineId Id="9330" Count="1" />
+      <LineId Id="1345" Count="7" />
+      <LineId Id="4767" Count="10" />
+      <LineId Id="4779" Count="6" />
+      <LineId Id="4788" Count="0" />
+      <LineId Id="4786" Count="1" />
+      <LineId Id="1353" Count="17" />
+      <LineId Id="1376" Count="4" />
+      <LineId Id="4225" Count="0" />
+      <LineId Id="1381" Count="0" />
+      <LineId Id="1389" Count="1" />
+      <LineId Id="1392" Count="1" />
+      <LineId Id="1395" Count="4" />
+      <LineId Id="4228" Count="1" />
+      <LineId Id="1402" Count="0" />
+      <LineId Id="4230" Count="0" />
+      <LineId Id="4233" Count="0" />
+      <LineId Id="4237" Count="0" />
+      <LineId Id="4274" Count="4" />
+      <LineId Id="4280" Count="0" />
+      <LineId Id="4289" Count="0" />
+      <LineId Id="4288" Count="0" />
+      <LineId Id="5468" Count="1" />
+      <LineId Id="4292" Count="0" />
+      <LineId Id="4290" Count="1" />
+      <LineId Id="4294" Count="0" />
+      <LineId Id="4293" Count="0" />
+      <LineId Id="5466" Count="1" />
+      <LineId Id="4301" Count="0" />
+      <LineId Id="4286" Count="0" />
+      <LineId Id="4266" Count="2" />
+      <LineId Id="4263" Count="0" />
+      <LineId Id="4287" Count="0" />
+      <LineId Id="4235" Count="0" />
+      <LineId Id="4272" Count="1" />
+      <LineId Id="1423" Count="308" />
+      <LineId Id="7595" Count="1" />
+      <LineId Id="1732" Count="39" />
+      <LineId Id="3166" Count="0" />
+      <LineId Id="4321" Count="0" />
+      <LineId Id="1772" Count="9" />
+      <LineId Id="7597" Count="1" />
+      <LineId Id="1782" Count="90" />
+      <LineId Id="7249" Count="0" />
+      <LineId Id="7940" Count="0" />
+      <LineId Id="7254" Count="0" />
+      <LineId Id="1875" Count="183" />
+      <LineId Id="4322" Count="0" />
+      <LineId Id="2059" Count="1" />
+      <LineId Id="3174" Count="0" />
+      <LineId Id="3176" Count="0" />
+      <LineId Id="3175" Count="0" />
+      <LineId Id="2061" Count="14" />
+      <LineId Id="2078" Count="12" />
+      <LineId Id="4306" Count="2" />
+      <LineId Id="2091" Count="21" />
+      <LineId Id="2119" Count="12" />
+      <LineId Id="4309" Count="8" />
+      <LineId Id="2132" Count="130" />
+      <LineId Id="8282" Count="0" />
+      <LineId Id="8287" Count="0" />
+      <LineId Id="2263" Count="1" />
+      <LineId Id="8288" Count="0" />
+      <LineId Id="2265" Count="2" />
+      <LineId Id="8286" Count="0" />
+      <LineId Id="2268" Count="262" />
+      <LineId Id="3501" Count="0" />
+      <LineId Id="3500" Count="0" />
+      <LineId Id="2532" Count="184" />
+      <LineId Id="3892" Count="1" />
+      <LineId Id="2717" Count="14" />
+      <LineId Id="4300" Count="0" />
+      <LineId Id="2732" Count="52" />
+      <LineId Id="4318" Count="1" />
+      <LineId Id="2785" Count="0" />
+      <LineId Id="2788" Count="0" />
+      <LineId Id="2790" Count="14" />
+      <LineId Id="4664" Count="0" />
+      <LineId Id="4667" Count="2" />
+      <LineId Id="4665" Count="0" />
+      <LineId Id="4675" Count="0" />
+      <LineId Id="4678" Count="0" />
+      <LineId Id="4677" Count="0" />
+      <LineId Id="4748" Count="0" />
+      <LineId Id="4751" Count="0" />
+      <LineId Id="4750" Count="0" />
+      <LineId Id="2805" Count="0" />
+      <LineId Id="5813" Count="0" />
+      <LineId Id="5812" Count="0" />
+      <LineId Id="2806" Count="37" />
+      <LineId Id="4296" Count="0" />
+      <LineId Id="2844" Count="1" />
+      <LineId Id="6154" Count="0" />
+      <LineId Id="6153" Count="0" />
+      <LineId Id="6156" Count="0" />
+      <LineId Id="6155" Count="0" />
+    </LineIds>
+  </POU>
+</TcPlcObject>

@@ -1,0 +1,1124 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<TcPlcObject Version="1.1.0.1" ProductVersion="3.1.4022.12">
+  <POU Name="TableHdl" Id="{4557a9b2-3a07-44e0-9db6-c8a3850420db}" SpecialFunc="None">
+    <Declaration><![CDATA[FUNCTION_BLOCK TableHdl
+
+(*
+	Description 	: Function bloc to handle rotation table
+	Author		: DLA
+	Date		: 18.08.2014
+	Version		: 1.00
+
+	Modifications :
+
+*)
+
+VAR_INPUT
+	bEnable						: BOOL;
+	bPowerOn					: BOOL;
+	bHomeTable					: BOOL;
+	bHomeBrush					: BOOL;
+	bLimitPosBrush				: BOOL;
+	bLimitNegBrush				: BOOL;
+	bResetErrors				: BOOL;
+	iTableVacuumPos1Flow		: INT;
+	iTableVacuumPos2Flow		: INT;
+	iTableVacuumPos3Flow		: INT;
+	iTableVacuumPos4Flow		: INT;
+	bTableLocked				: BOOL;
+	bTableNotLocked				: BOOL;
+	bAspirationIsUp				: BOOL;
+	bAspirationIsDown			: BOOL;
+	bCheckVacuum4Rotation		: BOOL;
+	eCommand					: TModuleCommands;
+	bStopReq					: BOOL;
+	bPauseReq					: BOOL;
+	sInGiveToLoader				: TTaker;
+	sInTakeFromLoader			: TGiver;
+	eRunCommand				: TRunCmdTable;
+	bLayeringWithTwoParts		: BOOL;
+	bManInterlock				: BOOL;
+	sVaccumSettings				: TVaccumSettings;
+	iPartialGiveTakeTime			: INT;
+	bVisionConfig					: BOOL;
+	bCleanBrushIsUp				: BOOL;
+	bCleanBrushIsDown				: BOOL;
+END_VAR
+VAR_OUTPUT
+	bModuleError					: BOOL;
+	bAspirationError				: BOOL;
+	bIndexTableError				: BOOL;
+	bPlate1VacuumError			: BOOL;
+	bPlate2VacuumError			: BOOL;
+	bPlate3VacuumError			: BOOL;
+	bPlate4VacuumError			: BOOL;
+	bTableAxisError				: BOOL;
+	bBrushAxisError				: BOOL;
+	bAspirationGoDown			: BOOL;
+	bAspirationGoUp				: BOOL;
+	bIndexTable					: BOOL;
+	bAspirationBrushOn			: BOOL;
+	bActivatePlate1Vacuum		: BOOL;
+	bActivatePlate1Blowing		: BOOL;
+	bActivatePlate2Vacuum		: BOOL;
+	bActivatePlate2Blowing		: BOOL;
+	bActivatePlate3Vacuum		: BOOL;
+	bActivatePlate3Blowing		: BOOL;
+	bActivatePlate4Vacuum		: BOOL;
+	bActivatePlate4Blowing		: BOOL;
+	bVacuumErrForRotation		: BOOL;
+	bVacuumNotOk4Pearling		: BOOL;
+	eSideOnLoader				: TTableSide;
+	sOutGiveToLoader			: TGiver;
+	sOutTakeFromLoader			: TTaker;
+	eRunStatus					: TRunStatus;
+	bManInterlockOut			: BOOL;
+	aiPearlsVacuumFlow			: ARRAY[0..1] OF INT;
+	bMoveCleanBrushDown			: BOOL;
+	bCleanBrushError			: BOOL;
+END_VAR
+VAR_IN_OUT
+	sCurrentState					: TModuleData;
+	sRunData					: TRunDataTable;
+	TManualCmd					: TManTable;
+	sTableAxisRef				: AXIS_REF;
+	sBrushAxisRef				: AXIS_REF;
+END_VAR
+VAR CONSTANT
+	lrSafeTolerance 					:LREAL := 1;											(* Tolerance for safety axis *)
+	lrPositionTolerance 				: LREAL := 0.1;
+END_VAR
+VAR PERSISTENT
+	alrWorkingPos				: ARRAY [0..1] OF LREAL := [0,180];		(* Working position of table CW / CCW *)
+	alrBrushParkPos				: ARRAY [0..1] OF LREAL := [0,0];
+	alrBrushWorkPos				: ARRAY [0..1] OF LREAL := [90,90];
+	alrBrushSpeed				: ARRAY [0..1] OF LREAL := [80,100]; 	// initial value [40,60];
+	lrTableJogStep				: LREAL					:= 5;
+	iNbOfCleaning				: INT					:= 1;
+	lrBrushJogStep				: LREAL					:= 5;
+	alrVacuumThreshold			: ARRAY[0..3] OF LREAL	:= [8,8,8,8];// [-0.65,-0.65,-0.65,-0.65];
+	lrTableCleanSpeed			: LREAL					:= 30;
+END_VAR
+VAR
+	i							: INT;
+	abEnablePlateVacuum			: ARRAY[0..3] OF BOOL;
+	abPlateVacuumOK			: ARRAY[0..3] OF BOOL;
+	abPlateVacuumError			: ARRAY[0..3] OF BOOL;
+	abForceBlowing				: ARRAY[0..3] OF BOOL;
+	abDisableVacuumChecking	: ARRAY[0..3] OF BOOL;
+	abActivatePlateBlowing		: ARRAY[0..3] OF BOOL;
+	abActivatePlateVacuum		: ARRAY[0..3] OF BOOL;
+	aiTableVacuumPosFlow	: ARRAY[0..3] OF INT;
+	eMoveTableAxisCommand		: TAxisCommands	:= AC_None;
+	eMoveBrushAxisCommand		: TAxisCommands	:= AC_None;
+	lrTableTargetPos				: LREAL;
+	lrBrushTargetPos				: LREAL;
+	lrCurrentTableMoveSpeed		: LREAL;
+	lrRunTableMoveSpeed		: LREAL;
+	lrCurrentBrushMoveSpeed		: LREAL;
+	TAspiration					: FB_CheckJack2_2;
+	TIndexTable					: FB_CheckJack1_2;
+	TCleanBrush				: FB_CheckJack1_2;
+	aTPlateVacuum				: ARRAY[0..3] OF  FB_VacuumAnalogCheck;
+	TAxisTable					: StdAxis;
+	TAxisBrush					: StdAxis;
+	iGiveTakePos				: INT;
+	iCleaningPos					: INT;
+	iCleaningCycle				: INT;
+	iOffsetPosNotTakeGive		: INT;
+	iTargetWorkingPos			: INT;
+	TGiveTakeTimer				: TON;
+	bPartialGiveTake				: BOOL;
+	bTableOkToMove			: BOOL;
+	TVacuumTimer				: TON;
+	eLastStatus 					: TModuleStatus := MS_Stopped;
+	tPartialGiveTakeTime			: TIME;
+	bCleanAfterTurn				: BOOL;
+	eCleaningStep				: TModuleSteps;
+	bDoCleaningSeq				: BOOL;
+	bDoCleaningOnMoveSeq		: BOOL;
+	bStopCleaningOnMoveSeq		: BOOL;
+	iStep						: INT;
+END_VAR]]></Declaration>
+    <Implementation>
+      <ST><![CDATA[IF (NOT sCurrentState.bStepMode) THEN
+	sCurrentState.bWaitStep := FALSE;
+END_IF
+
+(* Optimize code *)
+aiTableVacuumPosFlow[0] := iTableVacuumPos1Flow;
+aiTableVacuumPosFlow[1] := iTableVacuumPos2Flow;
+aiTableVacuumPosFlow[2] := iTableVacuumPos3Flow;
+aiTableVacuumPosFlow[3] := iTableVacuumPos4Flow;
+tPartialGiveTakeTime := INT_TO_TIME(iPartialGiveTakeTime);
+
+IF eLastStatus<>sCurrentState.eStatus THEN
+	IF eLastStatus=MS_Manual THEN
+		(*Leave manual mode, redefine part present base on vacuum *)
+		IF NOT abEnablePlateVacuum[0] THEN
+			sRunData.aTPartData[0,0,TS_A].bPartPresent := FALSE;
+			sRunData.aTPartData[0,1,TS_A].bPartPresent := FALSE;
+		END_IF
+		IF NOT abEnablePlateVacuum[1] THEN
+			sRunData.aTPartData[1,0,TS_A].bPartPresent := FALSE;
+			sRunData.aTPartData[1,1,TS_A].bPartPresent := FALSE;
+		END_IF
+		IF NOT abEnablePlateVacuum[2] THEN
+			sRunData.aTPartData[0,0,TS_B].bPartPresent := FALSE;
+			sRunData.aTPartData[0,1,TS_B].bPartPresent := FALSE;
+		END_IF
+		IF NOT abEnablePlateVacuum[3] THEN
+			sRunData.aTPartData[1,0,TS_B].bPartPresent := FALSE;
+			sRunData.aTPartData[1,1,TS_B].bPartPresent := FALSE;
+		END_IF
+	END_IF
+	IF eLastStatus=MS_Running OR sCurrentState.eStatus=MS_Manual THEN
+		(* Set vaccum base on part present, Vacuum can be disable if take part has failed*)
+		IF NOT bVisionConfig THEN
+			abEnablePlateVacuum[0] := sRunData.aTPartData[0,0,TS_A].bPartPresent OR sRunData.aTPartData[0,1,TS_A].bPartPresent;
+		END_IF
+		abEnablePlateVacuum[1] := sRunData.aTPartData[1,0,TS_A].bPartPresent OR sRunData.aTPartData[1,1,TS_A].bPartPresent;
+		abEnablePlateVacuum[2] := sRunData.aTPartData[0,0,TS_B].bPartPresent OR sRunData.aTPartData[0,1,TS_B].bPartPresent;
+		abEnablePlateVacuum[3] := sRunData.aTPartData[1,0,TS_B].bPartPresent OR sRunData.aTPartData[1,1,TS_B].bPartPresent;
+	END_IF
+	eLastStatus := sCurrentState.eStatus;
+END_IF
+IF NOT bLayeringWithTwoParts THEN
+	sRunData.aTPartData[0,1,TS_A].bPartPresent := FALSE;
+	sRunData.aTPartData[1,1,TS_A].bPartPresent := FALSE;
+	sRunData.aTPartData[0,1,TS_B].bPartPresent := FALSE;
+	sRunData.aTPartData[1,1,TS_B].bPartPresent := FALSE;
+END_IF
+
+CASE eCommand OF
+	MC_NoCmd :
+		CASE sCurrentState.eStatus OF
+			MS_Init :
+				CASE sCurrentState.eStep OF
+					SP_InitStp1 :
+						(* Init all synchros *)
+						FOR i := 0 TO 3 DO
+							abForceBlowing[i] := FALSE;
+							abDisableVacuumChecking[i] := FALSE;
+							(*abEnablePlateVacuum[i] := TRUE;*)
+						END_FOR
+						bMoveCleanBrushDown := FALSE;
+						bAspirationBrushOn := FALSE;
+						TVacuumTimer(IN := FALSE);
+						sCurrentState.eStep := SP_InitStp2;
+					SP_InitStp2 :
+						TVacuumTimer(IN := TRUE, PT := t#0s);
+						IF TVacuumTimer.Q THEN
+							IF NOT bVisionConfig THEN
+								abEnablePlateVacuum[0] := sRunData.aTPartData[0,0,TS_A].bPartPresent OR sRunData.aTPartData[0,1,TS_A].bPartPresent;
+							END_IF
+							abEnablePlateVacuum[1] := sRunData.aTPartData[1,0,TS_A].bPartPresent OR sRunData.aTPartData[1,1,TS_A].bPartPresent;
+							abEnablePlateVacuum[2] := sRunData.aTPartData[0,0,TS_B].bPartPresent OR sRunData.aTPartData[0,1,TS_B].bPartPresent;
+							abEnablePlateVacuum[3] := sRunData.aTPartData[1,0,TS_B].bPartPresent OR sRunData.aTPartData[1,1,TS_B].bPartPresent;
+							IF bLayeringWithTwoParts THEN
+							 	abDisableVacuumChecking[0] := sRunData.aTPartData[0,0,TS_A].bPartPresent XOR sRunData.aTPartData[0,1,TS_A].bPartPresent;
+								abDisableVacuumChecking[1] := sRunData.aTPartData[1,0,TS_A].bPartPresent XOR sRunData.aTPartData[1,1,TS_A].bPartPresent;
+								abDisableVacuumChecking[2] := sRunData.aTPartData[0,0,TS_B].bPartPresent XOR sRunData.aTPartData[0,1,TS_B].bPartPresent;
+								abDisableVacuumChecking[3] := sRunData.aTPartData[1,0,TS_B].bPartPresent XOR sRunData.aTPartData[1,1,TS_B].bPartPresent;
+							END_IF
+							IF sCurrentState.bInitDone THEN
+								sCurrentState.eStep := SP_InitStp50;
+							ELSE
+								sCurrentState.eStep := SP_InitStp3;
+							END_IF
+						END_IF
+					SP_InitStp3 :
+						(* Put the clean brush in the waiting position - Raise the aspiration - Lower index table *)
+						bAspirationGoDown := FALSE;
+						bIndexTable := FALSE;
+						sCurrentState.eStep := SP_InitStp4;
+					SP_InitStp4 :
+						(* Wait until all jacks are in position *)
+						IF  bAspirationIsUp AND bTableNotLocked THEN
+							sCurrentState.eStep := SP_InitStp5;
+						END_IF
+					SP_InitStp5 :
+						eMoveBrushAxisCommand := AC_Init;
+						eMoveTableAxisCommand := AC_Init;
+						sCurrentState.eStep := SP_InitStp6;
+					SP_InitStp6 :
+						IF TAxisTable.eCurrentState =  AS_InPosition AND TAxisBrush.eCurrentState =  AS_InPosition THEN
+							lrTableTargetPos := alrWorkingPos[0];
+							lrRunTableMoveSpeed := TAxisTable.lrRunningSpeed;
+							eMoveTableAxisCommand := AC_MoveAtAbsPos;
+							lrBrushTargetPos := alrBrushParkPos[0];
+							(* During init always use low speed *)
+							lrCurrentBrushMoveSpeed := alrBrushSpeed[0];
+							eMoveBrushAxisCommand := AC_MoveAtAbsPos;
+							sCurrentState.eStep := SP_InitStp7;
+						END_IF
+					SP_InitStp7 :
+						(* Wait until init position is reached *)
+						IF TAxisTable.eCurrentState =  AS_InPosition AND TAxisBrush.eCurrentState =  AS_InPosition THEN
+							(* Index table *)
+							bIndexTable := TRUE;
+							sCurrentState.eStep := SP_InitStp8;
+						END_IF
+					SP_InitStp8 :
+						IF bTableLocked THEN
+							bAspirationGoDown := TRUE;
+							sCurrentState.eStep := SP_InitStp9;
+						END_IF
+					SP_InitStp9 :
+						IF  bAspirationIsDown THEN
+							eSideOnLoader := TS_A;
+							sCurrentState.eStep := SP_InitStp99;
+						END_IF
+					SP_InitStp50 :
+						lrBrushTargetPos := alrBrushParkPos[0];
+						eMoveBrushAxisCommand := AC_MoveAtAbsPos;
+						sCurrentState.eStep := SP_InitStp51;
+					SP_InitStp51 :
+						IF TAxisBrush.eCurrentState =  AS_InPosition THEN
+							sCurrentState.eStep := SP_InitStp99;
+						END_IF
+					SP_InitStp99 : (* Leave init *)
+						sCurrentState.eStep := SP_RunStp1;
+						sCurrentState.eStatus := MS_Ready;
+						bDoCleaningSeq:= FALSE;
+						bDoCleaningOnMoveSeq:= FALSE;
+						bStopCleaningOnMoveSeq:= FALSE;
+						eCleaningStep := SP_RunStp1;
+						sCurrentState.bInitDone := TRUE;
+				END_CASE
+			MS_Running :
+				IF (NOT sCurrentState.bWaitStep) THEN
+					(* Cleaning sequence *)
+					CASE eCleaningStep OF
+						SP_RunStp1 :
+							IF bUse103171OptimB5CleanOn1Move THEN
+								eCleaningStep := SP_RunStp50;
+							ELSE
+								eCleaningStep := SP_RunStp10;
+							END_IF
+						SP_RunStp10 :
+							IF bDoCleaningSeq THEN
+								IF eSideOnLoader = TS_B THEN
+									iCleaningPos := 2;
+								ELSE
+									iCleaningPos := 0;
+								END_IF
+								FOR i := 0 TO 1 DO
+									IF NOT sRunData.aTPartData[i, 0, eSideOnLoader].bPartPresent AND NOT sRunData.aTPartData[i, 1, eSideOnLoader].bPartPresent THEN
+										abForceBlowing[i + iCleaningPos] := TRUE;
+									END_IF
+								END_FOR
+								bAspirationBrushOn := TRUE;
+								bMoveCleanBrushDown := TRUE;
+								iCleaningCycle := 0;
+								eCleaningStep := SP_RunStp12;
+							END_IF
+						SP_RunStp11:
+							IF iCleaningCycle < iNbOfCleaning THEN
+								lrBrushTargetPos := alrBrushWorkPos[0];
+								eMoveBrushAxisCommand := AC_MoveAtAbsPos;
+								eCleaningStep := SP_RunStp12;
+							ELSE
+								eCleaningStep := SP_RunStp14;
+							END_IF
+						SP_RunStp12:
+							IF (TAxisBrush.eCurrentState = AS_InPosition) THEN
+								lrBrushTargetPos := alrBrushWorkPos[1];
+								eMoveBrushAxisCommand := AC_MoveAtAbsPos;
+								eCleaningStep := SP_RunStp13;
+							END_IF
+						SP_RunStp13:
+							IF (TAxisBrush.eCurrentState = AS_InPosition) THEN
+								iCleaningCycle := iCleaningCycle + 1;
+								eCleaningStep := SP_RunStp11;
+							END_IF
+						SP_RunStp14:
+							IF (TAxisBrush.eCurrentState = AS_InPosition) THEN
+								lrBrushTargetPos := alrBrushParkPos[0];
+								eMoveBrushAxisCommand := AC_MoveAtAbsPos;
+								eCleaningStep := SP_RunStp15;
+							END_IF
+						SP_RunStp15:
+							IF (TAxisBrush.eCurrentState = AS_InPosition) THEN
+								eCleaningStep := SP_RunStp16;
+							END_IF
+						SP_RunStp16:
+							FOR i := iCleaningPos TO iCleaningPos+1 DO
+								abForceBlowing[i] := FALSE;
+							END_FOR
+							bAspirationBrushOn := FALSE;
+							bMoveCleanBrushDown := FALSE;
+							bDoCleaningSeq:= FALSE;
+							eCleaningStep := SP_RunStp10;
+						SP_RunStp50:							
+							IF bDoCleaningSeq THEN
+								eCleaningStep := SP_RunStp60;
+							ELSIF bDoCleaningOnMoveSeq THEN
+								eCleaningStep := SP_RunStp80;
+							END_IF
+						SP_RunStp60 :
+							IF eSideOnLoader = TS_B THEN
+								iCleaningPos := 1;
+							ELSE
+								iCleaningPos := 0;
+							END_IF
+							FOR i := 0 TO 1 DO
+								IF NOT sRunData.aTPartData[i, 0, eSideOnLoader].bPartPresent AND NOT sRunData.aTPartData[i, 1, eSideOnLoader].bPartPresent THEN
+									abForceBlowing[i + iCleaningPos] := TRUE;
+								END_IF
+							END_FOR
+							bAspirationBrushOn := TRUE;
+							bMoveCleanBrushDown := TRUE;
+							eCleaningStep := SP_RunStp61;
+						SP_RunStp61: 
+							(* Go to other position *)
+							IF TAxisBrush.lrCurrentPos < (alrBrushParkPos[0] + 1) THEN
+								lrBrushTargetPos := alrBrushWorkPos[1];
+							ELSE
+								lrBrushTargetPos := alrBrushWorkPos[0];
+							END_IF
+							lrCurrentBrushMoveSpeed := alrBrushSpeed[1];
+							eMoveBrushAxisCommand := AC_MoveAtAbsPos;
+							eCleaningStep := SP_RunStp62;
+						SP_RunStp62:
+							IF (TAxisBrush.eCurrentState = AS_InPosition) THEN
+								(* Move to final position *)
+								lrBrushTargetPos := alrBrushWorkPos[iCleaningPos];
+								eMoveBrushAxisCommand := AC_MoveAtAbsPos;
+								eCleaningStep := SP_RunStp63;
+							END_IF
+						SP_RunStp63:
+							IF (TAxisBrush.eCurrentState = AS_InPosition) THEN
+								bAspirationBrushOn := FALSE;
+								bMoveCleanBrushDown := FALSE;
+								bDoCleaningSeq:= FALSE;
+								eCleaningStep := SP_RunStp50;
+							END_IF
+						SP_RunStp80:
+							bAspirationBrushOn := TRUE;
+							bDoCleaningOnMoveSeq := FALSE;
+							IF eSideOnLoader = TS_B THEN
+								iCleaningPos := 0;
+							ELSE
+								iCleaningPos := 1;
+							END_IF
+							eCleaningStep := SP_RunStp81;
+						SP_RunStp81:
+							IF bStopCleaningOnMoveSeq THEN
+								bAspirationBrushOn := FALSE;
+								bStopCleaningOnMoveSeq := FALSE;
+								eCleaningStep := SP_RunStp50;
+							END_IF
+					END_CASE
+					CASE sCurrentState.eStep OF
+						SP_RunStp1:
+							eRunStatus := RS_WaitRequest;
+							CASE eRunCommand OF
+								RCT_None:
+									IF bStopReq  THEN
+										sCurrentState.eStatus := MS_Ready;
+									ELSIF bPauseReq THEN
+										sCurrentState.eStatus := MS_Paused;
+									END_IF
+								RCT_TakePart:
+									sOutTakeFromLoader.bHasTaken := FALSE;
+									sOutTakeFromLoader.bHasNotTaken := FALSE;
+									sOutTakeFromLoader.bReadyToTake := TRUE;
+									sCurrentState.eStep := SP_RunStp10;
+								RCT_GivePart:
+									sOutGiveToLoader.bHasGiven := FALSE;
+									sOutGiveToLoader.bPartDataReady := FALSE;
+									sCurrentState.eStep := SP_RunStp20;
+								RCT_Turn:
+									bCleanAfterTurn := FALSE;
+									sCurrentState.eStep := SP_RunStp30;
+								RCT_Clean:
+									sCurrentState.eStep := SP_RunStp40;
+								RCT_TurnAndClean:
+									bCleanAfterTurn := TRUE;
+									sCurrentState.eStep := SP_RunStp30;
+							END_CASE
+							IF sCurrentState.eStep<> SP_RunStp1 THEN eRunStatus := RS_ProcessRequest1; END_IF
+						SP_RunStp10 :  (*Take Part*)
+							IF sInTakeFromLoader.bPartDataReady THEN
+								sRunData.aTPartData[ sRunData.iGiveTakeLayeringPosition, sRunData.iGiveTakeLayeringOffsetPosition, eSideOnLoader] := sInTakeFromLoader.TPartData;
+								sRunData.aTPartData[sRunData.iGiveTakeLayeringPosition, sRunData.iGiveTakeLayeringOffsetPosition, eSideOnLoader].bPartPresent := FALSE;
+								sCurrentState.eStep := SP_RunStp11;
+							END_IF
+						SP_RunStp11 :
+							IF eSideOnLoader = TS_B THEN
+								iGiveTakePos := sRunData.iGiveTakeLayeringPosition + 2;
+							ELSE
+								iGiveTakePos := sRunData.iGiveTakeLayeringPosition;
+							END_IF
+							iOffsetPosNotTakeGive := ((sRunData.iGiveTakeLayeringOffsetPosition + 1) MOD 2);
+							abEnablePlateVacuum[iGiveTakePos] := TRUE;
+							sOutTakeFromLoader.bReadyToTake := TRUE;
+							IF bLayeringWithTwoParts AND NOT sRunData.aTPartData[sRunData.iGiveTakeLayeringPosition, iOffsetPosNotTakeGive, eSideOnLoader].bPartPresent THEN
+								bPartialGiveTake:= TRUE;
+							ELSE
+								bPartialGiveTake:= FALSE;
+							END_IF
+							abDisableVacuumChecking[iGiveTakePos] := TRUE;
+							sCurrentState.eStep := SP_RunStp12;
+						SP_RunStp12 :
+							(* Wait until loader has given *)
+							IF sInTakeFromLoader.bHasGiven THEN
+								sRunData.aTPartData[sRunData.iGiveTakeLayeringPosition, sRunData.iGiveTakeLayeringOffsetPosition, eSideOnLoader].bPartPresent := TRUE;
+								abDisableVacuumChecking[iGiveTakePos] := TRUE;
+								TGiveTakeTimer(IN:= FALSE);
+								sCurrentState.eStep := SP_RunStp13;
+							END_IF
+						SP_RunStp13 :
+							(* Check if the part is on Layering *)
+							TGiveTakeTimer(IN:=TRUE, PT := tPartialGiveTakeTime );
+							IF NOT bPartialGiveTake THEN
+								IF bRejectPartWithVacuumErrorOnTable THEN
+									TVacuumTimer(IN := FALSE);
+									sCurrentState.eStep := SP_RunStp16;
+								ELSE
+									sOutTakeFromLoader.bHasTaken := TRUE;
+									sCurrentState.eStep := SP_RunStp14;
+								END_IF
+							ELSIF TGiveTakeTimer.Q THEN
+								sOutTakeFromLoader.bHasTaken := TRUE;
+								sCurrentState.eStep := SP_RunStp1;
+							END_IF
+						SP_RunStp14 :
+							IF NOT sInTakeFromLoader.bHasGiven THEN
+								abDisableVacuumChecking[iGiveTakePos] := FALSE;
+								sCurrentState.eStep := SP_RunStp15;
+							END_IF
+						SP_RunStp15 :
+							IF aTPlateVacuum[iGiveTakePos].bVacuumCorrect THEN
+								sCurrentState.eStep := SP_RunStp1;
+							END_IF
+						SP_RunStp16 :
+							(* Wait until vacuum correct or vacuum error *)
+							TVacuumTimer(IN := TRUE, PT := aTPlateVacuum[iGiveTakePos].tVacErrorDelay);
+							IF aTPlateVacuum[iGiveTakePos].bVacuumStable THEN
+								sOutTakeFromLoader.bHasTaken := TRUE;
+								sCurrentState.eStep := SP_RunStp14;
+							ELSIF TVacuumTimer.Q THEN
+								sOutTakeFromLoader.bHasNotTaken := TRUE;
+								abEnablePlateVacuum[iGiveTakePos] := FALSE;
+								abDisableVacuumChecking[iGiveTakePos] := FALSE;
+								sCurrentState.eStep := SP_RunStp17;
+							END_IF
+						SP_RunStp17 :
+							IF NOT sInTakeFromLoader.bHasGiven THEN
+								sRunData.aTPartData[sRunData.iGiveTakeLayeringPosition, sRunData.iGiveTakeLayeringOffsetPosition, eSideOnLoader].bPartPresent := FALSE;
+								sCurrentState.eStep := SP_RunStp1;
+							END_IF
+						SP_RunStp20 : (*Give Part*)
+							sOutGiveToLoader.TPartData := sRunData.aTPartData[sRunData.iGiveTakeLayeringPosition, sRunData.iGiveTakeLayeringOffsetPosition, eSideOnLoader];
+							sOutGiveToLoader.bPartDataReady := TRUE;
+							sCurrentState.eStep := SP_RunStp21;
+						SP_RunStp21 :
+							IF sInGiveToLoader.bReadyToTake THEN
+								IF eSideOnLoader = TS_B THEN
+									iGiveTakePos := sRunData.iGiveTakeLayeringPosition + 2;
+								ELSE
+									iGiveTakePos := sRunData.iGiveTakeLayeringPosition;
+								END_IF
+								abEnablePlateVacuum[iGiveTakePos] := FALSE;
+								sCurrentState.eStep := SP_RunStp22;
+							END_IF
+						SP_RunStp22 :
+							(* Check if laying vacuum is disabled *)
+							IF aTPlateVacuum[iGiveTakePos].bVacuumCorrect THEN
+								sOutGiveToLoader.bHasGiven := TRUE;
+								sCurrentState.eStep := SP_RunStp23;
+							END_IF
+						SP_RunStp23 :
+							(* Check if right loader has taken the plate *)
+							IF sInGiveToLoader.bHasTaken THEN
+								sRunData.aTPartData[sRunData.iGiveTakeLayeringPosition, sRunData.iGiveTakeLayeringOffsetPosition, eSideOnLoader].bPartPresent := FALSE;
+								sCurrentState.eStep := SP_RunStp1;
+							END_IF
+						SP_RunStp30:
+							bTableOkToMove := TRUE;
+							FOR i:=0 TO 3 DO
+								IF NOT aTPlateVacuum[iGiveTakePos].bVacuumCorrect THEN
+									bTableOkToMove := FALSE;
+								END_IF
+							END_FOR
+							IF bTableOkToMove THEN
+								bAspirationGoDown := FALSE;
+								IF bCleanAfterTurn AND bUse103171OptimB5CleanOnBothSide THEN
+									bDoCleaningOnMoveSeq := TRUE;
+									eCleaningStep := SP_RunStp1;
+								END_IF
+								sCurrentState.eStep := SP_RunStp31;
+							END_IF
+						SP_RunStp31 :
+							IF  bAspirationIsUp THEN
+								bIndexTable := FALSE;
+								sCurrentState.eStep := SP_RunStp32;
+							END_IF
+						SP_RunStp32 :
+							IF  bTableNotLocked AND NOT bDoCleaningOnMoveSeq THEN
+								IF eSideOnLoader = TS_A THEN
+									iTargetWorkingPos := 1;
+								ELSE
+									iTargetWorkingPos := 0;
+								END_IF
+								lrTableTargetPos := alrWorkingPos[iTargetWorkingPos];
+								IF bCleanAfterTurn AND bUse103171OptimB5CleanOnBothSide THEN
+									lrRunTableMoveSpeed := lrTableCleanSpeed;
+								ELSE
+									lrRunTableMoveSpeed := TAxisTable.lrRunningSpeed;
+								END_IF
+								eSideOnLoader := TS_Moving;
+								eMoveTableAxisCommand := AC_MoveAtAbsPos;
+								sCurrentState.eStep := SP_RunStp35;
+							END_IF
+						SP_RunStp35 :
+							IF NOT bDoCleaningSeq THEN
+								(* Wait until position is reached *)
+								IF (TAxisTable.eCurrentState = AS_InPosition) THEN
+									(* Index table *)
+									bIndexTable := TRUE;
+									(* And clean if needed *)
+									IF bUse103171OptimB5CleanOnBothSide THEN
+										bStopCleaningOnMoveSeq := TRUE;
+									ELSIF bCleanAfterTurn THEN
+										bDoCleaningSeq := TRUE;
+										eCleaningStep := SP_RunStp1;
+									END_IF
+									sCurrentState.eStep := SP_RunStp36;
+								END_IF
+							END_IF
+						SP_RunStp36 :
+							IF bTableLocked THEN
+								bAspirationGoDown := TRUE;
+								sCurrentState.eStep := SP_RunStp37;
+							END_IF
+						SP_RunStp37 :
+							IF  bAspirationIsDown THEN
+								eRunStatus := RS_ProcessRequest2;
+								IF NOT bDoCleaningSeq THEN
+									IF iTargetWorkingPos = 0 THEN
+										eSideOnLoader := TS_A;
+									ELSE
+										eSideOnLoader := TS_B;
+									END_IF
+									sCurrentState.eStep := SP_RunStp1;
+								END_IF
+							END_IF
+						SP_RunStp40:
+							IF NOT bDoCleaningSeq THEN
+								bDoCleaningSeq := TRUE;
+								eCleaningStep := SP_RunStp1;
+								sCurrentState.eStep := SP_RunStp41;
+							END_IF
+						SP_RunStp41:
+							IF NOT bDoCleaningSeq THEN
+								sCurrentState.eStep := SP_RunStp1;
+							END_IF
+					END_CASE
+				END_IF
+			MS_Manual :
+				TManualCmd.TAxisTable.Home.Enable := NOT bManInterlock AND bAspirationIsUp AND bTableNotLocked AND ((TAxisTable.eCurrentState = AS_InPosition) OR (TAxisTable.eCurrentState = AS_NotHomed));
+				TManualCmd.TAxisTable.MoveBw.Enable := NOT bManInterlock AND bAspirationIsUp AND bTableNotLocked AND (TAxisTable.eCurrentState = AS_InPosition)  AND (TAxisTable.lrCurrentPos-lrTableJogStep >= TAxisTable.lrMinPos);
+				TManualCmd.TAxisTable.MoveFw.Enable := NOT bManInterlock AND bAspirationIsUp AND bTableNotLocked AND (TAxisTable.eCurrentState = AS_InPosition) AND (TAxisTable.lrCurrentPos+lrTableJogStep <= TAxisTable.lrMaxPos);
+				TManualCmd.TAxisTableLoading12Pos.MoveToTeach.Enable := NOT bManInterlock AND bAspirationIsUp AND bTableNotLocked AND (TAxisTable.eCurrentState = AS_InPosition) AND alrWorkingPos[0] >= TAxisTable.lrMinPos AND alrWorkingPos[0] <= TAxisTable.lrMaxPos;
+				TManualCmd.TAxisTableLoading34Pos.MoveToTeach.Enable := NOT bManInterlock AND bAspirationIsUp AND bTableNotLocked AND (TAxisTable.eCurrentState = AS_InPosition) AND alrWorkingPos[1] >= TAxisTable.lrMinPos AND alrWorkingPos[1] <= TAxisTable.lrMaxPos;
+				TManualCmd.TAxisTable.CurrentPos := TAxisTable.lrCurrentPos;
+
+				TManualCmd.TAxisBrush.Home.Enable := NOT bManInterlock AND bTableLocked AND ((TAxisBrush.eCurrentState = AS_InPosition) OR (TAxisBrush.eCurrentState = AS_NotHomed));
+				TManualCmd.TAxisBrush.MoveBw.Enable := NOT bManInterlock AND bTableLocked AND (TAxisBrush.eCurrentState = AS_InPosition)  AND (TAxisBrush.lrCurrentPos-lrBrushJogStep >= TAxisBrush.lrMinPos) ;
+				TManualCmd.TAxisBrush.MoveFw.Enable := NOT bManInterlock AND bTableLocked AND (TAxisBrush.eCurrentState = AS_InPosition)  AND (TAxisBrush.lrCurrentPos+lrBrushJogStep <= TAxisBrush.lrMaxPos) ;
+				FOR i:= 0 TO 1 DO
+					TManualCmd.aTAxisBrushParkPos[i].MoveToTeach.Enable := NOT bManInterlock AND bTableLocked AND (TAxisBrush.eCurrentState = AS_InPosition)  AND alrBrushParkPos[i] >= TAxisBrush.lrMinPos AND alrBrushParkPos[i] <= TAxisBrush.lrMaxPos;
+					TManualCmd.aTAxisBrushWorkPos[i].MoveToTeach.Enable := NOT bManInterlock AND bTableLocked AND (TAxisBrush.eCurrentState = AS_InPosition)  AND alrBrushWorkPos[i] >= TAxisBrush.lrMinPos AND alrBrushWorkPos[i] <= TAxisBrush.lrMaxPos;;
+				END_FOR
+				TManualCmd.TAxisBrush.CurrentPos := TAxisBrush.lrCurrentPos;
+
+				TManualCmd.TAspirationDown.Enable := NOT bManInterlock AND  (((TAxisTable.eCurrentState = AS_InPosition) AND (ABS(TAxisTable.lrCurrentPos - alrWorkingPos[0])<lrPositionTolerance) OR  (ABS(TAxisTable.lrCurrentPos - alrWorkingPos[1])<lrPositionTolerance)) OR bAspirationGoDown);
+				TManualCmd.TIndexTable.Enable := ((TAxisTable.eCurrentState = AS_InPosition) AND (ABS(TAxisTable.lrCurrentPos - alrWorkingPos[0])<lrPositionTolerance) OR  (ABS(TAxisTable.lrCurrentPos - alrWorkingPos[1])<lrPositionTolerance)) OR bIndexTable;
+
+				IF bTableLocked AND eSideOnLoader = TS_Moving THEN
+					IF (ABS(TAxisTable.lrCurrentPos - alrWorkingPos[0])<lrPositionTolerance) THEN
+						eSideOnLoader := TS_A;
+					ELSIF (ABS(TAxisTable.lrCurrentPos - alrWorkingPos[1])<lrPositionTolerance) THEN
+						eSideOnLoader := TS_B;
+					END_IF
+				ELSIF NOT bTableLocked THEN
+					eSideOnLoader := TS_Moving;
+				END_IF
+				FOR i:= 0 TO 3 DO
+					TManualCmd.alrVaccumValue[i] := aTPlateVacuum[i].lrVacuum;
+				END_FOR
+				TManualCmd.TPlate1Vacuum.Enable := TAxisTable.eCurrentState <> AS_Moving AND TAxisTable.eCurrentState <> AS_Stopping AND TAxisTable.eCurrentState <> AS_Homing  AND
+													TAxisBrush.eCurrentState <> AS_Moving AND TAxisBrush.eCurrentState <> AS_Stopping AND TAxisBrush.eCurrentState <> AS_Homing;
+				TManualCmd.TPlate2Vacuum.Enable := TManualCmd.TPlate1Vacuum.Enable;
+				TManualCmd.TPlate3Vacuum.Enable := TManualCmd.TPlate1Vacuum.Enable;
+				TManualCmd.TPlate4Vacuum.Enable :=TManualCmd.TPlate1Vacuum.Enable;
+
+				TManualCmd.TAspirationBrush.Enable := TRUE;
+				TManualCmd.TCleanBrushDown.Enable := TRUE;
+				bManInterlockOut := NOT (eSideOnLoader <> TS_Moving AND
+								 ((TAxisBrush.lrCurrentPos <= (alrBrushParkPos[0]+lrSafeTolerance)) OR (TAxisBrush.lrCurrentPos >= (alrBrushParkPos[1]-lrSafeTolerance))) AND
+								TAxisBrush.bAxisHomed AND bAspirationIsDown);
+
+
+				CASE sCurrentState.eStep OF
+					SP_ManualStp0 :
+						// Table
+						TManualCmd.TAxisTable.Home.Activate := FALSE;
+						TManualCmd.TAxisTable.JogStep := lrTableJogStep;
+						TManualCmd.TAxisTable.MoveBw.Activate := FALSE;
+						TManualCmd.TAxisTable.MoveFw.Activate := FALSE;
+						TManualCmd.TAxisTableLoading12Pos.MoveToTeach.Activate := FALSE;
+						TManualCmd.TAxisTableLoading12Pos.Teach := FALSE;
+						TManualCmd.TAxisTableLoading34Pos.MoveToTeach.Activate := FALSE;
+						TManualCmd.TAxisTableLoading34Pos.Teach := FALSE;
+						// Brush
+						TManualCmd.TAxisBrush.Home.Activate := FALSE;
+						TManualCmd.TAxisBrush.JogStep := lrBrushJogStep;
+						TManualCmd.TAxisBrush.MoveBw.Activate := FALSE;
+						TManualCmd.TAxisBrush.MoveFw.Activate := FALSE;
+						FOR i:= 0 TO 1 DO
+							TManualCmd.aTAxisBrushParkPos[i].MoveToTeach.Activate := FALSE;
+							TManualCmd.aTAxisBrushParkPos[i].Teach := FALSE;
+							TManualCmd.aTAxisBrushWorkPos[i].MoveToTeach.Activate := FALSE;
+							TManualCmd.aTAxisBrushWorkPos[i].Teach := FALSE;
+						END_FOR
+						FOR i:= 0 TO 3 DO
+							TManualCmd.alrVaccumThershold[i] := alrVacuumThreshold[i];
+						END_FOR
+
+
+						TManualCmd.TPlate1Vacuum.Activate := abEnablePlateVacuum[0];
+						TManualCmd.TPlate2Vacuum.Activate := abEnablePlateVacuum[1];
+						TManualCmd.TPlate3Vacuum.Activate := abEnablePlateVacuum[2];
+						TManualCmd.TPlate4Vacuum.Activate := abEnablePlateVacuum[3];
+						TManualCmd.TAspirationDown.Activate := bAspirationGoDown;
+						TManualCmd.TIndexTable.Activate := bIndexTable;
+
+						TManualCmd.TAspirationBrush.Activate := bAspirationBrushOn;
+						TManualCmd.TCleanBrushDown.Activate := bMoveCleanBrushDown;
+						sCurrentState.eStep := SP_ManualStp1;
+					SP_ManualStp1 :
+						IF bStopReq THEN
+							sCurrentState.eStatus := MS_Stopped;
+						ELSE
+							FOR i:= 0 TO 1 DO
+								TManualCmd.aTAxisBrushWorkPos[i].TeachedPos := alrBrushWorkPos[i];
+								TManualCmd.aTAxisBrushParkPos[i].TeachedPos := alrBrushParkPos[i];
+							END_FOR
+							TManualCmd.TAxisTableLoading12Pos.TeachedPos := alrWorkingPos[0];
+							TManualCmd.TAxisTableLoading34Pos.TeachedPos := alrWorkingPos[1];
+							IF (lrTableJogStep <> TManualCmd.TAxisTable.JogStep) THEN
+								lrTableJogStep := TManualCmd.TAxisTable.JogStep;
+							END_IF
+							IF TManualCmd.TAxisTableLoading12Pos.Teach THEN
+								alrWorkingPos[0] := TAxisTable.lrCurrentPos;
+								TManualCmd.TAxisTableLoading12Pos.Teach := FALSE;
+							END_IF
+							IF TManualCmd.TAxisTableLoading34Pos.Teach THEN
+								alrWorkingPos[1] := TAxisTable.lrCurrentPos;
+								TManualCmd.TAxisTableLoading34Pos.Teach := FALSE;
+							END_IF
+							IF TManualCmd.TAxisTableLoading12Pos.MoveToTeach.Activate THEN
+								lrTableTargetPos := alrWorkingPos[0];
+								sCurrentState.eStep := SP_ManualStp10;
+							ELSIF TManualCmd.TAxisTableLoading34Pos.MoveToTeach.Activate THEN
+								lrTableTargetPos := alrWorkingPos[1];
+								sCurrentState.eStep := SP_ManualStp10;
+							ELSIF TManualCmd.TAxisTable.MoveBw.Activate THEN
+								lrTableTargetPos := TAxisTable.lrCurrentPos - lrTableJogStep;
+								sCurrentState.eStep := SP_ManualStp10;
+							ELSIF TManualCmd.TAxisTable.MoveFw.Activate THEN
+								lrTableTargetPos := TAxisTable.lrCurrentPos + lrTableJogStep;
+								sCurrentState.eStep := SP_ManualStp10;
+							END_IF
+							IF TManualCmd.TAxisTable.Home.Activate AND sCurrentState.eStep = SP_ManualStp1 THEN
+								sCurrentState.eStep := SP_ManualStp20;
+							END_IF
+
+
+							IF (lrBrushJogStep <> TManualCmd.TAxisBrush.JogStep) THEN
+								lrBrushJogStep := TManualCmd.TAxisBrush.JogStep;
+							END_IF
+							FOR i:= 0 TO 1 DO
+								IF TManualCmd.aTAxisBrushParkPos[i].Teach THEN
+									alrBrushParkPos[i] := TAxisBrush.lrCurrentPos;
+									TManualCmd.aTAxisBrushParkPos[i].Teach := FALSE;
+								END_IF
+								IF TManualCmd.aTAxisBrushWorkPos[i].Teach THEN
+									alrBrushWorkPos[i] := TAxisBrush.lrCurrentPos;
+									TManualCmd.aTAxisBrushWorkPos[i].Teach := FALSE;
+								END_IF
+								IF TManualCmd.aTAxisBrushParkPos[i].MoveToTeach.Activate THEN
+									lrBrushTargetPos := alrBrushParkPos[i];
+									sCurrentState.eStep := SP_ManualStp15;
+								ELSIF TManualCmd.aTAxisBrushWorkPos[i].MoveToTeach.Activate THEN
+									lrBrushTargetPos := alrBrushWorkPos[i];
+									sCurrentState.eStep := SP_ManualStp15;
+								END_IF
+							END_FOR
+							IF TManualCmd.TAxisBrush.MoveBw.Activate THEN
+								lrBrushTargetPos := TAxisBrush.lrCurrentPos - lrBrushJogStep;
+								sCurrentState.eStep := SP_ManualStp15;
+							ELSIF TManualCmd.TAxisBrush.MoveFw.Activate THEN
+								lrBrushTargetPos := TAxisBrush.lrCurrentPos + lrBrushJogStep;
+								sCurrentState.eStep := SP_ManualStp15;
+							END_IF
+
+							IF TManualCmd.TAxisBrush.Home.Activate AND sCurrentState.eStep = SP_ManualStp1 THEN
+								sCurrentState.eStep := SP_ManualStp25;
+							END_IF
+							FOR i:= 0 TO 3 DO
+								IF TManualCmd.alrVaccumThershold[i] <> alrVacuumThreshold[i] THEN
+									alrVacuumThreshold[i] := TManualCmd.alrVaccumThershold[i];
+								END_IF
+							END_FOR
+
+							bAspirationGoDown := TManualCmd.TAspirationDown.Activate;
+							bIndexTable := TManualCmd.TIndexTable.Activate;
+							abEnablePlateVacuum[0] := TManualCmd.TPlate1Vacuum.Activate;
+							abEnablePlateVacuum[1] := TManualCmd.TPlate2Vacuum.Activate;
+							abEnablePlateVacuum[2] := TManualCmd.TPlate3Vacuum.Activate;
+							abEnablePlateVacuum[3] := TManualCmd.TPlate4Vacuum.Activate;
+						END_IF
+					SP_ManualStp10 : (*Move Table *)
+						eMoveTableAxisCommand := AC_MoveAtAbsPos;
+						sCurrentState.eStep := SP_ManualStp11;
+					SP_ManualStp11:
+						CASE TAxisTable.eCurrentState OF
+							AS_InPosition, AS_InError:
+								TManualCmd.TAxisTableLoading12Pos.MoveToTeach.Activate := FALSE;
+								TManualCmd.TAxisTableLoading34Pos.MoveToTeach.Activate := FALSE;
+								TManualCmd.TAxisTable.MoveFw.Activate := FALSE;
+								TManualCmd.TAxisTable.MoveBw.Activate := FALSE;
+								sCurrentState.eStep := SP_ManualStp1;
+						END_CASE
+					SP_ManualStp15: (*Move Brush *)
+						eMoveBrushAxisCommand := AC_MoveAtAbsPos;
+						sCurrentState.eStep := SP_ManualStp16;
+					SP_ManualStp16:
+						CASE TAxisBrush.eCurrentState OF
+							AS_InPosition, AS_InError:
+								FOR i := 0 TO 1 DO
+									TManualCmd.aTAxisBrushParkPos[i].MoveToTeach.Activate := FALSE;
+									TManualCmd.aTAxisBrushWorkPos[i].MoveToTeach.Activate := FALSE;
+								END_FOR
+								TManualCmd.TAxisBrush.MoveFw.Activate := FALSE;
+								TManualCmd.TAxisBrush.MoveBw.Activate := FALSE;
+								sCurrentState.eStep := SP_ManualStp1;
+						END_CASE
+					SP_ManualStp20 :  (* Init Table *)
+						eMoveTableAxisCommand := AC_Home;
+						sCurrentState.eStep := SP_ManualStp21;
+					SP_ManualStp21 :
+						CASE TAxisTable.eCurrentState OF
+							AS_InPosition:
+								lrTableTargetPos := alrWorkingPos[0];
+								eMoveTableAxisCommand := AC_MoveAtAbsPos;
+								sCurrentState.eStep := SP_ManualStp22;
+							AS_InError:
+								sCurrentState.eStep := SP_ManualStp1;
+								TManualCmd.TAxisTable.Home.Activate := FALSE;
+						END_CASE
+					SP_ManualStp22 :
+						CASE TAxisTable.eCurrentState OF
+							AS_InPosition, AS_InError:
+								sCurrentState.eStep := SP_ManualStp1;
+								TManualCmd.TAxisTable.Home.Activate := FALSE;
+						END_CASE
+					SP_ManualStp25 :  (* Init Brush*)
+						eMoveBrushAxisCommand := AC_Home;
+						sCurrentState.eStep := SP_ManualStp26;
+					SP_ManualStp26 :
+						CASE TAxisBrush.eCurrentState OF
+							AS_InPosition:
+								lrBrushTargetPos := alrBrushParkPos[0];
+								eMoveBrushAxisCommand := AC_MoveAtAbsPos;
+								sCurrentState.eStep := SP_ManualStp27;
+							AS_InError:
+								sCurrentState.eStep := SP_ManualStp1;
+								TManualCmd.TAxisBrush.Home.Activate := FALSE;
+						END_CASE
+					SP_ManualStp27 :(* Wait until init position is reached *)
+						CASE TAxisBrush.eCurrentState OF
+							AS_InPosition, AS_InError:
+								sCurrentState.eStep := SP_ManualStp1;
+								TManualCmd.TAxisBrush.Home.Activate := FALSE;
+						END_CASE
+				END_CASE
+				bAspirationBrushOn := TManualCmd.TAspirationBrush.Activate;
+				bMoveCleanBrushDown := TManualCmd.TCleanBrushDown.Activate;
+			MS_Paused:
+				IF bStopReq THEN
+					sCurrentState.eStatus := MS_Ready;
+				END_IF
+		END_CASE
+	MC_Init :
+		sCurrentState.eStep := SP_InitStp1;
+		sCurrentState.eStatus := MS_Init;
+	MC_Run :
+		sCurrentState.eStatus := MS_Running;
+	MC_Manual :
+		sCurrentState.bInitDone := FALSE;
+		sCurrentState.eStatus := MS_Manual;
+		sCurrentState.eStep := SP_ManualStp0;
+	MC_Stop :
+		sCurrentState.eStatus := MS_Stopped;
+END_CASE
+
+
+IF (NOT bPowerOn) THEN
+	bAspirationGoDown := TRUE;
+	bIndexTable := FALSE;
+	TManualCmd.TAspirationDown.Activate := bAspirationGoDown;
+	TManualCmd.TIndexTable.Activate := bIndexTable;
+END_IF
+
+IF bResetErrors THEN
+	bVacuumErrForRotation := FALSE;
+	sCurrentState.bInError := FALSE;
+END_IF
+
+IF (sCurrentState.eStatus <> MS_Manual) THEN
+	IF (eMoveTableAxisCommand <> AC_None ) AND
+		NOT bAspirationIsUp OR NOT bTableNotLocked THEN
+		bTableAxisError := TRUE;
+		eMoveTableAxisCommand := AC_None;
+	END_IF
+END_IF
+
+(* Table Axis *)
+IF (sCurrentState.eStatus = MS_Manual) THEN
+	lrCurrentTableMoveSpeed := TAxisTable.lrManualSpeed;
+ELSE
+	lrCurrentTableMoveSpeed := lrRunTableMoveSpeed;
+END_IF
+TAxisTable(
+	eCommand		:= eMoveTableAxisCommand,
+	lrTargetPos		:= lrTableTargetPos,
+	lrTargetSpeed	:= lrCurrentTableMoveSpeed,
+	sAxis			:= sTableAxisRef,
+	bResetErrors		:= bResetErrors,
+	bHomeSensor	:= bHomeTable,
+	bPowerIsOn		:= bPowerOn,
+	eAxisType		:= AT_AX5000,
+	stServoButton		:= TManualCmd.TAxisTable.ServoON
+);
+eMoveTableAxisCommand := AC_None;
+bTableAxisError := (TAxisTable.eCurrentState = AS_InError);
+
+(* Brush Axis *)
+IF (sCurrentState.eStatus = MS_Manual) THEN
+	lrCurrentBrushMoveSpeed := TAxisBrush.lrManualSpeed;
+(*ELSE
+	lrCurrentBrushMoveSpeed := TAxisBrush.lrRunningSpeed;
+*)END_IF
+TAxisBrush(
+	eCommand		:= eMoveBrushAxisCommand,
+	lrTargetPos		:= lrBrushTargetPos,
+	lrTargetSpeed	:= lrCurrentBrushMoveSpeed,
+	sAxis			:= sBrushAxisRef,
+	bResetErrors		:= bResetErrors,
+	bHomeSensor	:= bHomeBrush,
+	bPowerIsOn		:= bPowerOn,
+	bPosLimitSwitch	:= NOT bLimitPosBrush,
+	bNegLimitSwitch	:= NOT bLimitNegBrush,
+	lrMoveOutDist	:= 10,
+	stServoButton		:= TManualCmd.TAxisBrush.ServoON
+);
+eMoveBrushAxisCommand := AC_None;
+bBrushAxisError := (TAxisBrush.eCurrentState = AS_InError);
+
+bAspirationGoUp := NOT bAspirationGoDown;
+(* Check Aspiration Jack Error *)
+TAspiration(
+	bJackGoIn		:= bAspirationGoUp,
+	bJackGoOut		:= bAspirationGoDown,
+	bJackIsIn		:= bAspirationIsUp,
+	bJackIsOut		:= bAspirationIsDown,
+	tTimeOut			:= t#3s,
+	bResetErrors		:= bResetErrors,
+	bJackError		=> bAspirationError
+);
+
+(* Check Index Table Jack Error *)
+TIndexTable(
+	bJackGoOut		:= bIndexTable,
+	bJackIsIn		:= bTableNotLocked,
+	bJackIsOut		:= bTableLocked,
+	tTimeOut			:= t#1s,
+	bResetErrors		:= bResetErrors,
+	bJackError		=> bIndexTableError
+);
+
+(* Check Aspiration Jack Error *)
+TCleanBrush(
+	bJackGoOut		:= bMoveCleanBrushDown,
+	bJackIsIn		:= bCleanBrushIsUp,
+	bJackIsOut		:= bCleanBrushIsDown,
+	tTimeOut			:= t#3s,
+	bResetErrors		:= bResetErrors,
+	bJackError		=> bCleanBrushError
+);
+
+FOR i:= 0 TO 3 DO
+	IF abForceBlowing[i] THEN
+		aTPlateVacuum[i](
+			bEnableVacuum	:= FALSE,
+			tBlowingTime		:= ,
+			tVacErrorDelay	:= INT_TO_TIME(sVaccumSettings.iErrorDelay),
+			bReset			:= bResetErrors,
+			iVacuum			:= 0,
+		);
+	ELSE
+		aTPlateVacuum[i](
+			bEnableVacuum		:= abEnablePlateVacuum[i],
+			tVacErrorDelay		:= INT_TO_TIME(sVaccumSettings.iErrorDelay),
+			tBlowingTime			:= INT_TO_TIME(sVaccumSettings.iBlowing),
+			tWaitVacuumOK		:= INT_TO_TIME(sVaccumSettings.iWaitWhenVacuumOk),
+			bReset				:= bResetErrors,
+			iVacuum				:= aiTableVacuumPosFlow[i],
+			lrVacuumThreshold	 :=  alrVacuumThreshold[i],
+			bDisableVacuumChecking := abDisableVacuumChecking[i],
+			bVacuumOn			=> abActivatePlateVacuum[i],
+			bBlowOn				=> abActivatePlateBlowing[i],
+			bVacuumError		=> abPlateVacuumError[i],
+			bVacuumOK			=> abPlateVacuumOK[i]
+
+		);
+	END_IF
+	IF abForceBlowing[i] THEN
+		abPlateVacuumOK[i] := FALSE;
+		abActivatePlateVacuum[i] := FALSE;
+		abActivatePlateBlowing[i] := TRUE;
+		abPlateVacuumError[i] := FALSE;
+	END_IF
+END_FOR
+
+IF (bTableAxisError OR bBrushAxisError OR bAspirationError OR bCleanBrushError OR bIndexTableError OR abPlateVacuumError[0] OR abPlateVacuumError[1] OR abPlateVacuumError[2] OR abPlateVacuumError[3]) THEN
+	sCurrentState.bInError := TRUE;
+		IF (sCurrentState.eStatus <> MS_Manual) AND (sCurrentState.eStatus <> MS_Stopped) AND (sCurrentState.eStatus <> MS_Init) THEN
+		sCurrentState.eStatus := MS_Ready;
+	END_IF
+END_IF
+
+IF NOT bPowerOn OR bTableAxisError OR bBrushAxisError OR bIndexTableError THEN
+	sCurrentState.bInitDone := FALSE;
+	IF (sCurrentState.eStatus <> MS_Manual) THEN
+		sCurrentState.eStatus := MS_Stopped;
+	END_IF
+END_IF
+
+(*
+IF bAspirationBrushOn AND (NOT sLoaderTakeLeftPlate.bTakerIsSafe OR NOT sLoaderTakeRightPlate.bTakerIsSafe OR NOT
+		sPearlingTakeLeftPlate.bTakerIsSafe OR NOT sPearlingTakeRightPlate.bTakerIsSafe OR NOT
+		sLoaderGiveLeftPlate.bGiverIsSafe OR NOT sLoaderGiveRightPlate.bGiverIsSafe) THEN
+	sCurrentState.bInError := TRUE;
+	bAspirationBrushOn := FALSE;
+END_IF
+*)
+
+sRunData.eTableSide := eSideOnLoader;
+
+bModuleError := sCurrentState.bInError;
+
+sCurrentState.bInterlocked := bManInterlock AND  (sCurrentState.eStatus = MS_Manual);
+sCurrentState.bRunning := (sCurrentState.eStatus = MS_Running);
+IF (sCurrentState.eStatus <> MS_Running) THEN eRunStatus := RS_NotRunning; END_IF
+
+IF (eSideOnLoader = TS_A) THEN
+	aiPearlsVacuumFlow[PH_LEFT] := iTableVacuumPos3Flow;
+	aiPearlsVacuumFlow[PH_RIGHT] := iTableVacuumPos4Flow;
+ELSE
+	aiPearlsVacuumFlow[PH_LEFT] := iTableVacuumPos1Flow;
+	aiPearlsVacuumFlow[PH_RIGHT] := iTableVacuumPos2Flow;
+END_IF
+
+(* Optimize code *)
+bPlate1VacuumError := abPlateVacuumError[0];
+bPlate2VacuumError := abPlateVacuumError[1];
+bPlate3VacuumError := abPlateVacuumError[2];
+bPlate4VacuumError := abPlateVacuumError[3];
+bActivatePlate1Blowing := abActivatePlateBlowing[0];
+bActivatePlate2Blowing := abActivatePlateBlowing[1];
+bActivatePlate3Blowing := abActivatePlateBlowing[2];
+bActivatePlate4Blowing := abActivatePlateBlowing[3];
+bActivatePlate1Vacuum := abActivatePlateVacuum[0];
+bActivatePlate2Vacuum := abActivatePlateVacuum[1];
+bActivatePlate3Vacuum := abActivatePlateVacuum[2];
+bActivatePlate4Vacuum := abActivatePlateVacuum[3];
+
+iStep := sCurrentState.eStep;
+]]></ST>
+    </Implementation>
+    <LineIds Name="TableHdl">
+      <LineId Id="132" Count="60" />
+      <LineId Id="1299" Count="0" />
+      <LineId Id="193" Count="87" />
+      <LineId Id="1498" Count="0" />
+      <LineId Id="1503" Count="0" />
+      <LineId Id="1502" Count="0" />
+      <LineId Id="1504" Count="0" />
+      <LineId Id="1499" Count="0" />
+      <LineId Id="1505" Count="0" />
+      <LineId Id="2294" Count="0" />
+      <LineId Id="1507" Count="10" />
+      <LineId Id="2437" Count="0" />
+      <LineId Id="1518" Count="1" />
+      <LineId Id="2296" Count="0" />
+      <LineId Id="1520" Count="33" />
+      <LineId Id="2576" Count="0" />
+      <LineId Id="2297" Count="0" />
+      <LineId Id="1554" Count="0" />
+      <LineId Id="1559" Count="0" />
+      <LineId Id="281" Count="16" />
+      <LineId Id="1582" Count="0" />
+      <LineId Id="299" Count="1" />
+      <LineId Id="303" Count="1" />
+      <LineId Id="1560" Count="0" />
+      <LineId Id="306" Count="1" />
+      <LineId Id="311" Count="0" />
+      <LineId Id="1563" Count="2" />
+      <LineId Id="315" Count="0" />
+      <LineId Id="1568" Count="1" />
+      <LineId Id="1576" Count="0" />
+      <LineId Id="1570" Count="0" />
+      <LineId Id="1578" Count="0" />
+      <LineId Id="1566" Count="0" />
+      <LineId Id="1579" Count="1" />
+      <LineId Id="1583" Count="1" />
+      <LineId Id="2298" Count="0" />
+      <LineId Id="1730" Count="0" />
+      <LineId Id="1581" Count="0" />
+      <LineId Id="368" Count="0" />
+      <LineId Id="393" Count="1" />
+      <LineId Id="1592" Count="4" />
+      <LineId Id="395" Count="2" />
+      <LineId Id="401" Count="250" />
+      <LineId Id="2015" Count="0" />
+      <LineId Id="2013" Count="0" />
+      <LineId Id="652" Count="6" />
+      <LineId Id="2156" Count="0" />
+      <LineId Id="659" Count="30" />
+      <LineId Id="691" Count="0" />
+      <LineId Id="2014" Count="0" />
+      <LineId Id="692" Count="149" />
+      <LineId Id="2016" Count="0" />
+      <LineId Id="842" Count="102" />
+      <LineId Id="1865" Count="1" />
+      <LineId Id="1868" Count="7" />
+      <LineId Id="945" Count="63" />
+      <LineId Id="1158" Count="0" />
+      <LineId Id="1009" Count="0" />
+      <LineId Id="1160" Count="0" />
+      <LineId Id="1162" Count="0" />
+      <LineId Id="1161" Count="0" />
+      <LineId Id="1164" Count="1" />
+      <LineId Id="1163" Count="0" />
+      <LineId Id="1159" Count="0" />
+      <LineId Id="1010" Count="15" />
+    </LineIds>
+  </POU>
+</TcPlcObject>

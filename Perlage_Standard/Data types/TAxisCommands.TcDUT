@@ -1,0 +1,22 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<TcPlcObject Version="1.1.0.1" ProductVersion="3.1.4022.12">
+  <DUT Name="TAxisCommands" Id="{84e8bb9f-c116-4a9f-a70a-22285a26eb9d}">
+    <Declaration><![CDATA[TYPE TAxisCommands :
+	(	AC_None,
+		AC_MoveAtSpeed,
+		AC_MoveAtRelPos,
+		AC_MoveAtAbsPos,
+		AC_MoveModulo,
+		AC_Stop,
+		AC_ForceStop,
+		AC_ServoOn,
+		AC_ServoOff,
+		AC_Init,
+		AC_Home,
+		AC_MoveHome,
+		AC_MoveLimitNeg,
+		AC_ClearPosition
+	);
+END_TYPE]]></Declaration>
+  </DUT>
+</TcPlcObject>
